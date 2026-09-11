@@ -1,0 +1,11 @@
+{
+  "name": "MeshLink.Editor",
+  "rootNamespace": "Malloc.MeshLink",
+  "references": [
+    "MeshLink.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "autoReferenced": true
+}

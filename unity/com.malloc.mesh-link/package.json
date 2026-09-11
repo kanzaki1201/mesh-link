@@ -1,0 +1,11 @@
+{
+  "name": "com.malloc.mesh-link",
+  "version": "0.1.0",
+  "displayName": "Mesh Link",
+  "description": "Receive scene previews from Nomad and Blender in the Unity Editor.",
+  "unity": "6000.3",
+  "author": {
+    "name": "malloc"
+  },
+  "license": "MIT"
+}

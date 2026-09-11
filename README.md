@@ -101,7 +101,7 @@ Each row shows the object and slot names, a short mesh ID, and a Unity material 
 Assign, replace, or clear a material in that field.
 Objects that share geometry keep independent material assignments.
 
-Assignments last only for the session; persistent material mapping is tracked in [#4](../../issues/4).
+Assignments last only for the session; persistent material mapping is tracked in [#4](https://github.com/kanzaki1201/mesh-link/issues/4).
 A change in slot count clears that object's assignments.
 MToon materials can show close-range bloom on synchronized meshes.
 

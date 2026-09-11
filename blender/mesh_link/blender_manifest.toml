@@ -5,7 +5,7 @@ name = "Mesh Link"
 tagline = "Send base meshes and live edits to Unity"
 maintainer = "kanzaki1201"
 type = "add-on"
-blender_version_min = "4.2.0"
+blender_version_min = "5.0.0"
 license = ["SPDX:MIT"]
 
 [permissions]

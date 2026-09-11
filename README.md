@@ -10,11 +10,9 @@ Preview objects, meshes, and material assignments are transient and last only fo
 
 - Unity 6000.3 or later.
 - For Nomad: a Nomad version with App Linking.
-- For Blender: Blender 4.2 or later is the declared minimum; tested with Blender 5.2, with Blender 4.2 itself unverified.
+- For Blender: Blender 5.0 or later; tested with Blender 5.2.
 - The source and Unity run on the same machine or the same local network.
 - The configured TCP port must be reachable; Mesh Link defaults to port 48312.
-
-The live Blender-to-Unity round trip is unverified.
 
 ## Install the Unity package
 

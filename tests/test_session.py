@@ -7,9 +7,9 @@ from contextlib import contextmanager
 import numpy as np
 import pytest
 
-from encode import encode_mesh_delta, encode_mesh_full
-from session import Session
-from transport import encode_frame, read_frame
+from unity_link.encode import encode_mesh_delta, encode_mesh_full
+from unity_link.session import Session
+from unity_link.transport import encode_frame, read_frame
 
 
 @contextmanager

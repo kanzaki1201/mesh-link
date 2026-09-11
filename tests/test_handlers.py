@@ -2,7 +2,6 @@ import copy
 import importlib
 import sys
 import types
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,22 +9,18 @@ import pytest
 
 @pytest.fixture
 def handlers(monkeypatch):
-    package = types.ModuleType('addon_test')
-    package.__path__ = [str(Path(__file__).resolve().parents[1])]
     bpy = types.ModuleType('bpy')
     app = types.ModuleType('bpy.app')
     callbacks = types.ModuleType('bpy.app.handlers')
     callbacks.persistent = lambda callback: callback
     app.handlers = callbacks
     bpy.app = app
-    for name, value in [('addon_test', package), ('bpy', bpy), ('bpy.app', app),
+    for name, value in [('bpy', bpy), ('bpy.app', app),
                         ('bpy.app.handlers', callbacks)]:
         monkeypatch.setitem(sys.modules, name, value)
-    module = importlib.import_module('addon_test.handlers')
+    module = importlib.import_module('unity_link.handlers')
     yield module
-    for name in list(sys.modules):
-        if name.startswith('addon_test.'):
-            del sys.modules[name]
+    del sys.modules['unity_link.handlers']
 
 
 class Block(dict):

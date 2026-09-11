@@ -4,8 +4,8 @@ import struct
 
 import pytest
 
-import transport
-from transport import Transport, encode_frame, read_frame
+import unity_link.transport as transport
+from unity_link.transport import Transport, encode_frame, read_frame
 
 
 def test_framing_round_trip():

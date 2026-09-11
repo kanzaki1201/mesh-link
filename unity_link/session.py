@@ -1,7 +1,4 @@
-try:
-    from .transport import Transport
-except ImportError:
-    from transport import Transport
+from .transport import Transport
 
 
 class Session:

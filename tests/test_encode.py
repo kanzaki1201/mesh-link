@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from encode import encode_mesh_delta, encode_mesh_full, to_link_matrix, to_link_positions, topology_equal
+from unity_link.encode import encode_mesh_delta, encode_mesh_full, to_link_matrix, to_link_positions, topology_equal
 
 
 def mesh(**changes):

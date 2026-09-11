@@ -23,7 +23,7 @@ def _snapshot(obj):
         obj.update_from_editmode()
     mesh = obj.data
     if len(mesh.vertices) > 2_000_000:
-        raise ValueError(f'{obj.name}: exceeds 2,000,000 vertices')
+        raise ValueError('exceeds 2,000,000 vertices')
     vertices = obj.active_shape_key.data if obj.active_shape_key else mesh.vertices
     return dict(
         positions=_array(vertices, 'co', 3, np.float32),
@@ -273,10 +273,10 @@ def drain():
                 _sync.tick(bpy.context.view_layer)
         except Exception as exc:
             _session.close(str(exc))
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type == 'VIEW_3D':
-                area.tag_redraw()
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
     return 1 / 30
 
 

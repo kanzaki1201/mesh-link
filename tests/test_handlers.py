@@ -227,6 +227,18 @@ def test_snapshot_reads_active_shape_key_in_edit_mode(handlers):
     np.testing.assert_array_equal(snapshot['positions'], [[1, 2, 3]])
 
 
+def test_vertex_limit_error_names_object_once(handlers):
+    obj = Object('Big')
+    obj.data.vertices = range(2_000_001)
+    sync = handlers.SceneSync(Link(()))
+    view = types.SimpleNamespace(objects=Objects([obj]))
+    with pytest.raises(ValueError) as info:
+        sync.tick(view)
+    text = str(info.value)
+    assert text.count('Big') == 1
+    assert 'exceeds 2,000,000 vertices' in text
+
+
 def test_invalid_existing_uuid_is_replaced(setup):
     sync, link, view, first, second = setup()
     first['unity_link_id'] = 'z' * 32

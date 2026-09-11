@@ -1,0 +1,12 @@
+schema_version = "1.0.0"
+id = "unity_link"
+version = "0.1.0"
+name = "Unity Link"
+tagline = "Send base meshes and live edits to Unity"
+maintainer = "kanzaki1201"
+type = "add-on"
+blender_version_min = "4.2.0"
+license = ["SPDX:MIT"]
+
+[permissions]
+network = "Connect to the Unity mesh listener"

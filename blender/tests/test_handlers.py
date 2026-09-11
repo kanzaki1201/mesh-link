@@ -18,9 +18,9 @@ def handlers(monkeypatch):
     for name, value in [('bpy', bpy), ('bpy.app', app),
                         ('bpy.app.handlers', callbacks)]:
         monkeypatch.setitem(sys.modules, name, value)
-    module = importlib.import_module('unity_link.handlers')
+    module = importlib.import_module('mesh_link.handlers')
     yield module
-    del sys.modules['unity_link.handlers']
+    del sys.modules['mesh_link.handlers']
 
 
 class Block(dict):
@@ -112,7 +112,7 @@ def test_no_instance_capability_sends_independent_geometry(setup):
     sync.tick(view)
     assert kinds(link) == ['mesh_full', 'mesh_full']
     assert link.messages[0][0]['geometry_id'] != link.messages[1][0]['geometry_id']
-    assert first.data['unity_link_geometry_id'] == second.data['unity_link_geometry_id']
+    assert first.data['mesh_link_geometry_id'] == second.data['mesh_link_geometry_id']
 
 
 @pytest.mark.parametrize('capabilities, expected', [
@@ -164,17 +164,17 @@ def test_object_state_and_unlink(setup):
     view.objects.remove(second)
     sync.tick(view)
     assert kinds(link) == ['object_delete']
-    assert link.messages[0][0]['link_id'] == second['unity_link_id']
+    assert link.messages[0][0]['link_id'] == second['mesh_link_id']
 
 
 def test_duplicate_ids_and_initially_hidden(setup):
     sync, link, view, first, second = setup(shared=False)
-    first['unity_link_id'] = second['unity_link_id'] = 'a' * 32
-    first.data['unity_link_geometry_id'] = second.data['unity_link_geometry_id'] = 'b' * 32
+    first['mesh_link_id'] = second['mesh_link_id'] = 'a' * 32
+    first.data['mesh_link_geometry_id'] = second.data['mesh_link_geometry_id'] = 'b' * 32
     second.visible = False
     sync.tick(view)
-    assert first['unity_link_id'] != second['unity_link_id']
-    assert first.data['unity_link_geometry_id'] != second.data['unity_link_geometry_id']
+    assert first['mesh_link_id'] != second['mesh_link_id']
+    assert first.data['mesh_link_geometry_id'] != second.data['mesh_link_geometry_id']
     assert kinds(link) == ['mesh_full']
     link.messages.clear()
     second.visible = True
@@ -186,7 +186,7 @@ def test_overflow_and_failed_send_retry_full(setup):
     sync, link, view, first, second = setup()
     sync.tick(view)
     link.messages.clear()
-    link.overflow.add(second['unity_link_id'])
+    link.overflow.add(second['mesh_link_id'])
     sync.tick(view)
     assert kinds(link) == ['mesh_full']
     link.messages.clear()
@@ -236,9 +236,9 @@ def test_vertex_limit_error_names_object_once(handlers):
 
 def test_invalid_existing_uuid_is_replaced(setup):
     sync, link, view, first, second = setup()
-    first['unity_link_id'] = 'z' * 32
+    first['mesh_link_id'] = 'z' * 32
     sync.tick(view)
-    assert all(character in '0123456789abcdef' for character in first['unity_link_id'])
+    assert all(character in '0123456789abcdef' for character in first['mesh_link_id'])
 
 def test_instance_material_edit_is_sent(setup):
     sync, link, view, first, second = setup()
@@ -277,7 +277,7 @@ def test_hidden_overflow_requires_full_when_visible(setup):
     sync, link, view, first, second = setup()
     sync.tick(view)
     first.visible = second.visible = False
-    link.overflow.add(first['unity_link_id'])
+    link.overflow.add(first['mesh_link_id'])
     sync.tick(view)
     sync.tick(view)
     link.messages.clear()

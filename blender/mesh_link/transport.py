@@ -69,7 +69,7 @@ class Transport:
     def start(self):
         if self._thread is not None:
             raise RuntimeError("Transport already started")
-        self._thread = threading.Thread(target=self._run, daemon=True, name="Unity Link")
+        self._thread = threading.Thread(target=self._run, daemon=True, name="Mesh Link")
         self._thread.start()
 
     def close(self):

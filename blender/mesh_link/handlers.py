@@ -90,8 +90,8 @@ class SceneSync:
         objects.sort(key=lambda obj: obj.as_pointer() not in self.pointers)
         ids, geometry_ids, result = {}, {}, {}
         for obj in objects:
-            mesh_id = _assign_id(obj, 'unity_link_id', ids)
-            _assign_id(obj.data, 'unity_link_geometry_id', geometry_ids)
+            mesh_id = _assign_id(obj, 'mesh_link_id', ids)
+            _assign_id(obj.data, 'mesh_link_geometry_id', geometry_ids)
             result[mesh_id] = obj
         self.pointers = {obj.as_pointer() for obj in objects}
         return result
@@ -108,7 +108,7 @@ class SceneSync:
         for mesh_id, obj in objects.items():
             if mesh_id not in self.sent and not obj.visible_get(view_layer=view_layer):
                 continue
-            geometry_id = obj.data['unity_link_geometry_id'] if shared else mesh_id
+            geometry_id = obj.data['mesh_link_geometry_id'] if shared else mesh_id
             groups.setdefault(geometry_id, []).append((mesh_id, obj))
         return groups
 
@@ -209,7 +209,7 @@ def status():
 def connect(context):
     global _session, _sync, _endpoint
     disconnect()
-    host, port = context.scene.unity_link_host, context.scene.unity_link_port
+    host, port = context.scene.mesh_link_host, context.scene.mesh_link_port
     _endpoint = f'{host}:{port}'
     tokens = context.preferences.addons[__package__].preferences.pair_tokens
     entry = tokens.get(_endpoint)

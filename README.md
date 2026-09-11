@@ -4,7 +4,7 @@ Mesh Link provides a one-way live mesh link into the Unity Editor.
 Nomad Sculpt sends through Nomad App Linking while Unity uses connect mode.
 Blender sends through the Mesh Link extension while Unity uses listen mode.
 Unity previews meshes with Unity materials that you assign.
-Preview objects, meshes, and material assignments are transient and last only for the active session.
+Preview objects and meshes are transient; material assignments are saved on the `MeshLinkScene` component.
 
 ## Requirements
 
@@ -99,8 +99,10 @@ Each row shows the object and slot names, a short mesh ID, and a Unity material 
 Assign, replace, or clear a material in that field.
 Objects that share geometry keep independent material assignments.
 
-Assignments last only for the session; persistent material mapping is tracked in [#4](https://github.com/kanzaki1201/mesh-link/issues/4).
-A change in slot count clears that object's assignments.
+Assignments are stored on the `MeshLinkScene` component, so they survive a stop, a reconnect, and a Unity restart.
+A stored assignment is reapplied when an object with the same mesh ID and slot appears, or, failing that, the same object and slot names.
+Assignments record Undo and mark the scene dirty; save the scene to keep them.
+`Stored Materials (N)` shows the store size, and `Clear Stored Materials` empties it.
 MToon materials can show close-range bloom on synchronized meshes.
 
 <!-- screenshot: Synced Object Materials with separate object and slot assignments -->
@@ -118,7 +120,7 @@ MToon materials can show close-range bloom on synchronized meshes.
 
 - Unity Editor preview only; one scene owns the global session and one client can use the listener.
 - Synchronization is one-way; Unity edits do not return to the source.
-- Preview state is not saved; stopping sync, losing the connection, closing the scene, reloading scripts, or changing Play Mode clears it.
+- Preview objects and meshes are not saved; stopping sync, losing the connection, closing the scene, reloading scripts, or changing Play Mode clears them.
 - No automatic discovery or reconnection.
 - No hierarchy, groups, cameras, lights, armatures, or evaluated Blender modifiers.
 - No source material assets, textures, or shading transfer; assign materials in Unity.

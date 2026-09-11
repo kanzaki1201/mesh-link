@@ -6,7 +6,7 @@ Requires Unity 6000.3 or later.
 For the local checkout, use this entry in the host project's `Packages/manifest.json`:
 
 ```json
-"com.malloc.mesh-link": "file:unity-link-blender/unity/com.malloc.mesh-link"
+"com.malloc.mesh-link": "file:mesh-link/unity/com.malloc.mesh-link"
 ```
 
 Or install through Unity Package Manager with this Git URL:

@@ -209,9 +209,65 @@ namespace Malloc.MeshLink
             }
 
             var materials = entry.Renderer.sharedMaterials;
+            Undo.RecordObject(scene, "Assign Mesh Link material");
+            Undo.RecordObject(entry.Renderer, "Assign Mesh Link material");
+            StoreMaterial(scene, entry, material, slot);
             materials[slot] = material;
             entry.Renderer.sharedMaterials = materials;
+            EditorSceneManager.MarkSceneDirty(scene.gameObject.scene);
+            NotifyInspector();
             return true;
+        }
+
+        private void StoreMaterial(MeshLinkScene scene, ObjectEntry entry, Material material, int slot)
+        {
+            var stored = scene.MaterialStore.Find(item => item.meshId == entry.MeshId && item.slotIndex == slot);
+            if (material == null)
+            {
+                scene.MaterialStore.Remove(stored);
+                return;
+            }
+            if (stored == null)
+            {
+                stored = new MaterialStoreEntry { meshId = entry.MeshId, slotIndex = slot };
+                scene.MaterialStore.Add(stored);
+            }
+            stored.objectName = entry.State.name;
+            var names = geometries[entry.GeometryId].Data.FaceMaterials.Names;
+            stored.slotName = names == null ? entry.State.name : names[slot];
+            stored.material = material;
+        }
+
+        internal void ClearStoredMaterials(MeshLinkScene scene)
+        {
+            Undo.RecordObject(scene, "Clear Stored Materials");
+            scene.MaterialStore.Clear();
+            EditorSceneManager.MarkSceneDirty(scene.gameObject.scene);
+            NotifyInspector();
+        }
+
+        private void ReapplyMaterials(ObjectEntry entry, MeshLinkFaceMaterials group, string objectName)
+        {
+            var materials = entry.Renderer.sharedMaterials;
+            for (var slot = 0; slot < materials.Length; slot++)
+            {
+                var slotName = group.Names == null ? objectName : group.Names[slot];
+                var stored = owner.MaterialStore.Find(item => item.meshId == entry.MeshId && item.slotIndex == slot)
+                    ?? owner.MaterialStore.Find(item => item.objectName == objectName && item.slotName == slotName);
+                materials[slot] = stored?.material != null ? stored.material : null;
+            }
+            entry.Renderer.sharedMaterials = materials;
+        }
+
+        private void RenameStoredMaterials(ObjectEntry entry)
+        {
+            foreach (var stored in owner.MaterialStore.Where(item => item.meshId == entry.MeshId))
+            {
+                stored.objectName = entry.State.name;
+                if (geometries[entry.GeometryId].Data.FaceMaterials.Names == null)
+                    stored.slotName = entry.State.name;
+                EditorSceneManager.MarkSceneDirty(owner.gameObject.scene);
+            }
         }
 
         internal void Pump()
@@ -671,7 +727,10 @@ namespace Malloc.MeshLink
             if (geometry.Data == null || geometry.Data.FaceMaterials.SlotCount == data.FaceMaterials.SlotCount)
                 return;
             foreach (var entry in objects.Values.Where(entry => entry.GeometryId == geometry.GeometryId))
+            {
                 entry.Renderer.sharedMaterials = new Material[data.FaceMaterials.SlotCount];
+                ReapplyMaterials(entry, data.FaceMaterials, entry.State.name);
+            }
             NotifyInspector();
         }
 
@@ -687,7 +746,7 @@ namespace Malloc.MeshLink
             ResizeGeometryMaterials(geometry, data);
             geometry.Data = data;
 
-            var entry = GetOrCreateObject(header.mesh_id, geometry.Data.FaceMaterials.SlotCount);
+            var entry = GetOrCreateObject(header.mesh_id, header.name, geometry.Data.FaceMaterials);
             ResizeAttachedMaterials(entry, geometry);
             AttachGeometry(entry, geometry);
             ApplyIncomingState(entry, json, header.request_id);
@@ -728,7 +787,7 @@ namespace Malloc.MeshLink
                 SetStatus("Connected. Skipped mesh instance: slot count changes require a full update.");
                 return;
             }
-            var entry = GetOrCreateObject(header.mesh_id, geometry.Data.FaceMaterials.SlotCount);
+            var entry = GetOrCreateObject(header.mesh_id, header.name, geometry.Data.FaceMaterials);
             AttachGeometry(entry, geometry);
             ApplyIncomingState(entry, json, header.request_id);
         }
@@ -889,6 +948,7 @@ namespace Malloc.MeshLink
             entry.GameObject.transform.localScale = result.Transform.Scale;
             if (!string.Equals(oldName, result.State.name, StringComparison.Ordinal))
             {
+                RenameStoredMaterials(entry);
                 NotifyInspector();
             }
         }
@@ -936,7 +996,7 @@ namespace Malloc.MeshLink
             return geometry;
         }
 
-        private ObjectEntry GetOrCreateObject(string meshId, int slotCount)
+        private ObjectEntry GetOrCreateObject(string meshId, string objectName, MeshLinkFaceMaterials group)
         {
             if (objects.TryGetValue(meshId, out var entry))
             {
@@ -955,10 +1015,11 @@ namespace Malloc.MeshLink
             gameObject.transform.SetParent(previewRoot.transform, false);
             var filter = gameObject.AddComponent<MeshFilter>();
             var renderer = gameObject.AddComponent<MeshRenderer>();
-            renderer.sharedMaterials = new Material[slotCount];
+            renderer.sharedMaterials = new Material[group.SlotCount];
             entry = new ObjectEntry(
                 meshId, gameObject, filter, renderer,
                 ObjectStateDto.Initial(meshId));
+            ReapplyMaterials(entry, group, objectName);
             objects.Add(meshId, entry);
             NotifyInspector();
             return entry;
@@ -986,6 +1047,7 @@ namespace Malloc.MeshLink
                 geometries[entry.GeometryId].Data.FaceMaterials.SlotCount == geometry.Data.FaceMaterials.SlotCount)
                 return;
             entry.Renderer.sharedMaterials = new Material[geometry.Data.FaceMaterials.SlotCount];
+            ReapplyMaterials(entry, geometry.Data.FaceMaterials, entry.State.name);
             NotifyInspector();
         }
 

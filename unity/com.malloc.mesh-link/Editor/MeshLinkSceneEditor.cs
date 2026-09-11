@@ -41,6 +41,16 @@ namespace Malloc.MeshLink
             {
                 DrawMaterials(scene, snapshot.Rows);
             }
+
+            DrawStoredMaterials(scene);
+        }
+
+        private void DrawStoredMaterials(MeshLinkScene scene)
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField($"Stored Materials ({scene.MaterialStore.Count})", EditorStyles.boldLabel);
+            if (GUILayout.Button("Clear Stored Materials"))
+                Session.ClearStoredMaterials(scene);
         }
 
         private void DrawSessionButton(

@@ -29,6 +29,7 @@ namespace Malloc.MeshLink.Tests
         [SetUp]
         public void SetUp()
         {
+            Undo.ClearAll();
             session = MeshLinkSession.Instance;
             session.StopForTests();
             scene = EditorSceneManager.NewPreviewScene();
@@ -41,6 +42,7 @@ namespace Malloc.MeshLink.Tests
         [TearDown]
         public void TearDown()
         {
+            Undo.ClearAll();
             session.StopForTests();
             if (pairPort != 0)
             {
@@ -74,7 +76,7 @@ namespace Malloc.MeshLink.Tests
                 .OrderBy(name => name)
                 .ToArray();
 
-            Assert.That(fields, Is.EqualTo(new[] { "host", "listen", "port" }));
+            Assert.That(fields, Is.EqualTo(new[] { "host", "listen", "materialStore", "port" }));
             Assert.That(owner.Listen, Is.False);
         }
 
@@ -94,7 +96,7 @@ namespace Malloc.MeshLink.Tests
                 Assert.That(scene.isDirty, Is.False);
                 Assert.That(session.SetMaterial(owner, "mesh-a", materialA), Is.True);
                 Assert.That(session.SetMaterial(owner, "mesh-i", materialB), Is.True);
-                Assert.That(scene.isDirty, Is.False);
+                Assert.That(scene.isDirty, Is.True);
 
                 var rendererA = session.FindRenderer("mesh-a");
                 var rendererI = session.FindRenderer("mesh-i");
@@ -122,7 +124,7 @@ namespace Malloc.MeshLink.Tests
                 Assert.That(session.SetMaterial(owner, "mesh-i", null), Is.True);
                 Assert.That(rendererA.sharedMaterial, Is.SameAs(materialC));
                 Assert.That(rendererI.sharedMaterial, Is.Null);
-                Assert.That(scene.isDirty, Is.False);
+                Assert.That(scene.isDirty, Is.True);
 
                 peer.Send(ObjectDeleteJson("mesh-b", true));
                 WaitUntil(() => session.ObjectCount == 2);
@@ -146,7 +148,7 @@ namespace Malloc.MeshLink.Tests
 
                 Assert.That(session.SetMaterial(owner, "mesh-a", null), Is.True);
                 Assert.That(rendererA.sharedMaterial, Is.Null);
-                Assert.That(scene.isDirty, Is.False);
+                Assert.That(scene.isDirty, Is.True);
 
                 peer.CloseConnection();
                 WaitUntil(() => !session.IsRunning);
@@ -293,8 +295,8 @@ namespace Malloc.MeshLink.Tests
                 {
                     peer.Send(FaceMaterialJson().Replace("\"Detail\"", "\"Detail\",\"Extra\""), FaceMaterialBinary());
                     WaitUntil(() => renderer.sharedMaterials.Length == 3);
-                    Assert.That(renderer.sharedMaterials, Is.EqualTo(new Material[3]));
-                    Assert.That(instance.sharedMaterials, Is.EqualTo(new Material[3]));
+                    Assert.That(renderer.sharedMaterials, Is.EqualTo(new Material[] { null, materialA, null }));
+                    Assert.That(instance.sharedMaterials, Is.EqualTo(new Material[] { null, materialB, null }));
                     Assert.That(session.FindMesh("mesh-i").subMeshCount, Is.EqualTo(3));
                     Assert.That(changes, Is.GreaterThan(0));
                 }
@@ -368,10 +370,16 @@ namespace Malloc.MeshLink.Tests
                 peer.Send(MeshFullJson("mesh-a", "geometry-a", "Original", false, false), MeshBinary(1f));
                 WaitUntil(() => session.ObjectCount == 1);
                 Assert.That(Row("mesh-a").Label, Is.EqualTo("Original / Original"));
+                session.SetMaterial(owner, "mesh-a", materialA);
+                Undo.FlushUndoRecordObjects();
+                ClearSceneDirtiness();
                 peer.Send(ObjectStateJson("mesh-a", "Renamed", true, true));
                 WaitUntil(() => Row("mesh-a").Name == "Renamed");
                 Assert.That(Row("mesh-a").SlotName, Is.EqualTo("Renamed"));
                 Assert.That(Row("mesh-a").Label, Is.EqualTo("Renamed / Renamed"));
+                Assert.That(owner.MaterialStore.Single().objectName, Is.EqualTo("Renamed"));
+                Assert.That(owner.MaterialStore.Single().slotName, Is.EqualTo("Renamed"));
+                Assert.That(scene.isDirty, Is.True);
             }
         }
 
@@ -435,6 +443,192 @@ namespace Malloc.MeshLink.Tests
                 Assert.That(session.FindMesh("mesh-a").vertices[1].x, Is.EqualTo(1f));
                 Assert.That(session.FindMesh("mesh-a").GetTriangles(1), Is.EqualTo(new[] { 0, 2, 1 }));
                 Assert.That(session.GetSnapshot(owner).Rows[0].SlotName, Is.EqualTo("Body"));
+            }
+        }
+
+
+        [Test]
+        public void RecreatedObjectRenameUpdatesStoreForNameFallback()
+        {
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(MeshFullJson("mesh-a", "geometry-a", "Original", false, false), MeshBinary(1f));
+                WaitUntil(() => session.ObjectCount == 1);
+                session.SetMaterial(owner, "mesh-a", materialA);
+                Undo.FlushUndoRecordObjects();
+                peer.Send(ObjectDeleteJson("mesh-a", false));
+                WaitUntil(() => session.ObjectCount == 0);
+                ClearSceneDirtiness();
+                peer.Send(MeshFullJson("mesh-a", "geometry-a", "Renamed", false, false), MeshBinary(1f));
+                WaitUntil(() => session.ObjectCount == 1);
+                Assert.That(session.FindRenderer("mesh-a").sharedMaterial, Is.SameAs(materialA));
+                Assert.That(owner.MaterialStore.Single().objectName, Is.EqualTo("Renamed"));
+                Assert.That(owner.MaterialStore.Single().slotName, Is.EqualTo("Renamed"));
+                Assert.That(scene.isDirty, Is.True);
+                peer.Send(ObjectDeleteJson("mesh-a", false));
+                WaitUntil(() => session.ObjectCount == 0);
+                peer.Send(MeshFullJson("mesh-new", "geometry-a", "Renamed", false, false), MeshBinary(1f));
+                WaitUntil(() => session.ObjectCount == 1);
+                Assert.That(session.FindRenderer("mesh-new").sharedMaterial, Is.SameAs(materialA));
+                Assert.That(owner.MaterialStore.Single().meshId, Is.EqualTo("mesh-a"));
+            }
+        }
+
+        [Test]
+        public void MaterialAssignmentUndoRestoresRendererAndStore()
+        {
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                WaitUntil(() => session.ObjectCount == 1);
+                ClearSceneDirtiness();
+                Undo.IncrementCurrentGroup();
+                Assert.That(session.SetMaterial(owner, "mesh-a", materialA, 1), Is.True);
+                Undo.FlushUndoRecordObjects();
+                Assert.That(scene.isDirty, Is.True);
+                var stored = owner.MaterialStore.Single();
+                Assert.That(stored.meshId, Is.EqualTo("mesh-a"));
+                Assert.That(stored.slotIndex, Is.EqualTo(1));
+                Assert.That(stored.objectName, Is.EqualTo("Object"));
+                Assert.That(stored.slotName, Is.EqualTo("Detail"));
+                Assert.That(stored.material, Is.SameAs(materialA));
+                Undo.PerformUndo();
+                Assert.That(owner.MaterialStore, Is.Empty);
+                Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.Null);
+            }
+        }
+
+        [TestCase("mesh-a")]
+        [TestCase("mesh-new")]
+        public void StoredMaterialSurvivesStopAndRestart(string meshId)
+        {
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                WaitUntil(() => session.ObjectCount == 1);
+                session.SetMaterial(owner, "mesh-a", materialB, 1);
+                session.StopForTests();
+                Assert.That(owner.MaterialStore.Count, Is.EqualTo(1));
+                EditorPrefs.DeleteKey(MeshLinkSession.PairTokenKey("127.0.0.1", pairPort));
+            }
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(FaceMaterialJson().Replace("mesh-a", meshId), FaceMaterialBinary());
+                WaitUntil(() => session.ObjectCount == 1);
+                Assert.That(session.FindRenderer(meshId).sharedMaterials,
+                    Is.EqualTo(new Material[] { null, materialB }));
+                Assert.That(owner.MaterialStore.Single().meshId, Is.EqualTo("mesh-a"));
+            }
+        }
+
+        [Test]
+        public void AttachedGeometryResizeRefillsStoredMaterial()
+        {
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                WaitUntil(() => session.ObjectCount == 1);
+                session.SetMaterial(owner, "mesh-a", materialB, 1);
+                peer.Send(MeshFullJson("mesh-a", "geometry-b", "Object", false, false), MeshBinary(2f));
+                WaitUntil(() => session.FindRenderer("mesh-a").sharedMaterials.Length == 1);
+                Assert.That(owner.MaterialStore.Single().material, Is.SameAs(materialB));
+                peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                WaitUntil(() => session.FindRenderer("mesh-a").sharedMaterials.Length == 2);
+                Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialB));
+            }
+        }
+
+        [Test]
+        public void DeletedMaterialAssetLeavesRecreatedSlotUnassigned()
+        {
+            var path = AssetDatabase.GenerateUniqueAssetPath("Assets/MeshLinkMaterialStoreTest.mat");
+            var asset = new Material(materialA.shader);
+            AssetDatabase.CreateAsset(asset, path);
+            try
+            {
+                using (var peer = new FakePeer())
+                {
+                    pairPort = peer.Port;
+                    CompleteHandshake(peer, false);
+                    peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                    WaitUntil(() => session.ObjectCount == 1);
+                    session.SetMaterial(owner, "mesh-a", asset, 1);
+                    Assert.That(AssetDatabase.DeleteAsset(path), Is.True);
+                    peer.Send(ObjectDeleteJson("mesh-a", false));
+                    WaitUntil(() => session.ObjectCount == 0);
+                    peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                    WaitUntil(() => session.ObjectCount == 1);
+                    Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1] == null, Is.True);
+                    Assert.That(owner.MaterialStore.Count, Is.EqualTo(1));
+                }
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void ClearStoredMaterialsLeavesRendererAndSupportsUndo()
+        {
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                WaitUntil(() => session.ObjectCount == 1);
+                session.SetMaterial(owner, "mesh-a", materialA, 1);
+                Undo.FlushUndoRecordObjects();
+                Undo.IncrementCurrentGroup();
+                var changes = 0;
+                Action changed = () => changes++;
+                session.InspectorStateChanged += changed;
+                try
+                {
+                    session.ClearStoredMaterials(owner);
+                    Undo.FlushUndoRecordObjects();
+                    Assert.That(owner.MaterialStore, Is.Empty);
+                    Assert.That(changes, Is.EqualTo(1));
+                    Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialA));
+                    Undo.PerformUndo();
+                    Assert.That(owner.MaterialStore.Single().material, Is.SameAs(materialA));
+                }
+                finally
+                {
+                    session.InspectorStateChanged -= changed;
+                }
+            }
+        }
+
+        [Test]
+        public void NullAssignmentRemovesStoredEntryAndUndoRestoresIt()
+        {
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                WaitUntil(() => session.ObjectCount == 1);
+                session.SetMaterial(owner, "mesh-a", materialA, 1);
+                Undo.FlushUndoRecordObjects();
+                Undo.IncrementCurrentGroup();
+                session.SetMaterial(owner, "mesh-a", null, 1);
+                Undo.FlushUndoRecordObjects();
+                Assert.That(owner.MaterialStore, Is.Empty);
+                Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.Null);
+                Undo.PerformUndo();
+                Assert.That(owner.MaterialStore.Single().material, Is.SameAs(materialA));
+                Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialA));
             }
         }
 

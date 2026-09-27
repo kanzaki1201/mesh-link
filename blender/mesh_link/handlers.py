@@ -206,6 +206,25 @@ def status():
     return _session.status if _session else 'Disconnected'
 
 
+def can_bake():
+    return (running() and _session.ready
+            and {'material', 'texture'} <= _session.capabilities)
+
+
+def bake_and_send(context):
+    from . import bake
+
+    if not can_bake():
+        raise ValueError('Listener does not support material and texture')
+    sent = [(mesh_id, obj) for mesh_id, obj in _sync.objects(context.view_layer).items()
+            if mesh_id in _sync.sent]
+    objects = [(mesh_id, obj) for mesh_id, obj in sent
+               if bake.render_enabled(obj, context.view_layer)]
+    size = int(context.preferences.addons[__package__].preferences.texture_size)
+    count = _session.send_bakes(bake.bake_objects(objects, size))
+    _session.status = f'Sent {count} textures, skipped {len(sent) - len(objects)} hidden objects'
+
+
 def connect(context):
     global _session, _sync, _endpoint
     disconnect()

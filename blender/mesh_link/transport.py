@@ -109,6 +109,17 @@ class Transport:
             self._out_bytes += len(frame)
         return True
 
+    def send_batch(self, messages):
+        frames = [(dict(header), encode_frame(header, payload))
+                  for header, payload in messages]
+        size = sum(len(frame) for _, frame in frames)
+        with self._lock:
+            if self._stop.is_set() or self._out_bytes + size > self.max_queue_bytes:
+                return False
+            self._outbound.extend(frames)
+            self._out_bytes += size
+        return True
+
     def poll(self):
         with self._lock:
             messages = [(header, payload) for header, payload in self._inbound]

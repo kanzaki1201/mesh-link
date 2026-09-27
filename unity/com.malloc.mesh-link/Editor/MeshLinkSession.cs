@@ -245,7 +245,7 @@ namespace Malloc.MeshLink
         {
             return running && owner == scene &&
                 textures.SetBinding(meshId, slot, channel, property,
-                    FindRenderer(meshId), scene.MaterialMap);
+                    FindRenderer, scene.MaterialMap);
         }
 
         private void StoreMaterial(MeshLinkMaterialMap map, ObjectEntry entry, Material material, int slot)
@@ -2078,6 +2078,7 @@ namespace Malloc.MeshLink
             AssemblyReloadEvents.beforeAssemblyReload += OnAssemblyReload;
             EditorApplication.quitting += OnEditorQuit;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            Undo.undoRedoPerformed += OnUndoRedo;
             callbacksSubscribed = true;
         }
 
@@ -2092,7 +2093,13 @@ namespace Malloc.MeshLink
             AssemblyReloadEvents.beforeAssemblyReload -= OnAssemblyReload;
             EditorApplication.quitting -= OnEditorQuit;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            Undo.undoRedoPerformed -= OnUndoRedo;
             callbacksSubscribed = false;
+        }
+
+        private void OnUndoRedo()
+        {
+            textures.ReapplyAll(FindRenderer, owner.MaterialMap);
         }
 
         private void OnAssemblyReload()

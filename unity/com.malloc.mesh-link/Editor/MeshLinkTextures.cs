@@ -57,10 +57,10 @@ namespace Malloc.MeshLink
                     return;
                 }
 
-                var slot = fields.TryGetValue("slot_index", out var slotJson)
-                    ? int.Parse(slotJson)
-                    : 0;
-                if (slot < 0 || slot >= renderer.sharedMaterials.Length)
+                var slot = 0;
+                if (fields.TryGetValue("slot_index", out var slotJson) &&
+                    !int.TryParse(slotJson, out slot) ||
+                    slot < 0 || slot >= renderer.sharedMaterials.Length)
                 {
                     setStatus("Connected. Skipped material: slot_index is out of range.");
                     return;
@@ -69,8 +69,10 @@ namespace Malloc.MeshLink
                 if (!fields.TryGetValue("material", out var materialJson) ||
                     !ReadFields(materialJson).TryGetValue("textures", out var texturesJson)) return;
                 var updates = ReadFields(texturesJson);
+                var textureIds = updates.ToDictionary(update => update.Key,
+                    update => ReadTextureId(update.Value), StringComparer.Ordinal);
                 var channels = GetOrCreateChannels(meshId, slot);
-                foreach (var update in updates)
+                foreach (var update in textureIds)
                 {
                     if (!IsSupportedChannel(update.Key)) continue;
                     ApplyChannel(channels, update.Key, update.Value);
@@ -87,17 +89,24 @@ namespace Malloc.MeshLink
             }
         }
 
+        private static string ReadTextureId(string json)
+        {
+            if (json == "null") return null;
+            var fields = ReadFields(json);
+            if (!fields.TryGetValue("texture_id", out var idJson)) return null;
+            if (idJson.Length < 2 || idJson[0] != '"' || idJson[idJson.Length - 1] != '"')
+                throw new FormatException("Invalid texture_id.");
+            return JsonUtility.FromJson<TextureReference>(json).texture_id;
+        }
+
         private void ApplyChannel(Dictionary<string, ChannelState> channels,
-            string channel, string json)
+            string channel, string textureId)
         {
             if (!channels.TryGetValue(channel, out var state))
             {
                 state = new ChannelState();
                 channels.Add(channel, state);
             }
-            var texture = json == "null" ? null
-                : JsonUtility.FromJson<TextureReference>(json);
-            var textureId = texture?.texture_id;
             if (string.IsNullOrEmpty(textureId))
             {
                 state.Id = null;
@@ -163,7 +172,6 @@ namespace Malloc.MeshLink
                         Reapply(objectSlots.Key, findRenderer(objectSlots.Key), map);
                 }
             }
-            TrimCache();
         }
 
         internal void Reapply(string meshId, Renderer renderer, MeshLinkMaterialMap map)
@@ -176,17 +184,6 @@ namespace Malloc.MeshLink
             {
                 if (slot.Key >= materials.Length) continue;
                 var block = new MaterialPropertyBlock();
-                renderer.GetPropertyBlock(block, slot.Key);
-                foreach (var channel in slot.Value)
-                {
-                    var state = channel.Value;
-                    if (!string.IsNullOrEmpty(state.AppliedProperty))
-                        block.SetTexture(state.AppliedProperty,
-                            HasTextureProperty(materials[slot.Key]?.shader, state.AppliedProperty)
-                                ? materials[slot.Key].GetTexture(state.AppliedProperty)
-                                : null);
-                    state.AppliedProperty = null;
-                }
                 foreach (var channel in slot.Value)
                 {
                     var state = channel.Value;
@@ -195,10 +192,15 @@ namespace Malloc.MeshLink
                     var texture = Decode(state.Id, IsLinear(channel.Key));
                     if (texture == null) continue;
                     block.SetTexture(property, texture);
-                    state.AppliedProperty = property;
                 }
                 renderer.SetPropertyBlock(block, slot.Key);
             }
+        }
+
+        internal void ReapplyAll(Func<string, Renderer> findRenderer, MeshLinkMaterialMap map)
+        {
+            foreach (var meshId in slots.Keys.ToArray())
+                Reapply(meshId, findRenderer(meshId), map);
         }
 
         internal string ResolveProperty(Material material, string channel,
@@ -225,8 +227,9 @@ namespace Malloc.MeshLink
         }
 
         internal bool SetBinding(string meshId, int slot, string channel, string property,
-            Renderer renderer, MeshLinkMaterialMap map)
+            Func<string, Renderer> findRenderer, MeshLinkMaterialMap map)
         {
+            var renderer = findRenderer(meshId);
             if (renderer == null || map == null || slot < 0 ||
                 slot >= renderer.sharedMaterials.Length) return false;
             var material = renderer.sharedMaterials[slot];
@@ -247,7 +250,12 @@ namespace Malloc.MeshLink
                 binding.property = property;
             EditorUtility.SetDirty(map);
             if (EditorUtility.IsPersistent(map)) AssetDatabase.SaveAssetIfDirty(map);
-            Reapply(meshId, renderer, map);
+            foreach (var objectSlots in slots)
+            {
+                var target = findRenderer(objectSlots.Key);
+                if (target != null && target.sharedMaterials.Any(item => item == material))
+                    Reapply(objectSlots.Key, target, map);
+            }
             notifyInspector();
             return true;
         }
@@ -355,6 +363,7 @@ namespace Malloc.MeshLink
                 !active.Contains(id)).ToArray())
             {
                 blobs.Remove(id);
+                referenced.Remove(id);
                 foreach (var key in new[] { id + ":linear", id + ":srgb" })
                 {
                     if (!decoded.TryGetValue(key, out var texture)) continue;
@@ -382,7 +391,7 @@ namespace Malloc.MeshLink
                 SkipWhitespace(json, ref position);
                 var start = position;
                 SkipValue(json, ref position);
-                fields[key] = json.Substring(start, position - start);
+                fields[key] = json.Substring(start, position - start).Trim();
                 SkipWhitespace(json, ref position);
                 if (position >= json.Length) throw new FormatException("Incomplete JSON object.");
                 if (json[position++] == '}') return fields;
@@ -443,7 +452,6 @@ namespace Malloc.MeshLink
         {
             internal string Id;
             internal string PendingId;
-            internal string AppliedProperty;
         }
 
         [Serializable]

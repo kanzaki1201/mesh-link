@@ -115,9 +115,12 @@ MToon materials can show close-range bloom on synchronized meshes.
 
 In Blender, press **Bake & Send Textures** to preview baked maps in Unity listen mode.
 Mesh Link receives `color` (sRGB), `emissive` (sRGB), `normal` (linear), and `x_<name>` (linear) channels.
-By default, `color` uses the shader's MainTexture property, then `_MainTex`, then `_BaseMap`; `emissive` uses `_EmissionMap`; and `normal` uses `_BumpMap`, then `_NormalMap`.
+By default, `color` uses the shader's MainTexture property, then `_MainTex`, then `_BaseMap`.
+The `emissive` channel uses `_EmissionMap`.
+The `normal` channel uses `_BumpMap`, then `_NormalMap`.
 An `x_` channel needs a property binding.
-Set bindings in the material rows; they are saved in the Material Map asset.
+Set bindings in the material rows.
+Mesh Link saves them in the Material Map asset.
 Preview textures are transient.
 A property block cannot enable a shader feature, so enable the feature on the material first.
 

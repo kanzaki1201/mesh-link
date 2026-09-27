@@ -37,3 +37,22 @@ def test_channel_label_error_names_material_and_node(bake, labels, node):
 
 def test_valid_unlinked_channel_has_no_bake(bake):
     assert bake.channels(material_with_labels('mask_2')) == []
+
+
+def test_repeated_material_bakes_once_without_changing_polygons(bake, monkeypatch):
+    material = types.SimpleNamespace(name='Paint', as_pointer=lambda: 1)
+    slots = [types.SimpleNamespace(material=material) for _ in range(2)]
+    polygons = [types.SimpleNamespace(material_index=index) for index in (0, 1)]
+    obj = types.SimpleNamespace(material_slots=slots,
+                                data=types.SimpleNamespace(polygons=polygons))
+    calls = []
+
+    def bake_slot(_obj, _material, _size):
+        calls.append(1)
+        return {'color': b'png'}
+
+    monkeypatch.setattr(bake, '_bake_slot', bake_slot)
+    result = bake._bake_object('mesh', obj, 64)
+    assert calls == [1]
+    assert [slot[3] for slot in result] == [{'color': b'png'}] * 2
+    assert [polygon.material_index for polygon in polygons] == [0, 1]

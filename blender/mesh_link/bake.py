@@ -111,20 +111,42 @@ def _bake_slot(obj, material, size):
 
 def _bake_object(mesh_id, obj, size):
     result = []
-    indices = [polygon.material_index for polygon in obj.data.polygons]
+    materials = {slot.material.as_pointer(): slot.material for slot in obj.material_slots
+                 if slot.material is not None}
+    sink = None
+    sink_nodes = []
+    enabled = []
     try:
+        if len(materials) > 1:
+            sink = bpy.data.images.new("Mesh Link Sink", width=8, height=8,
+                                       alpha=True, float_buffer=False)
+            sink.colorspace_settings.name = 'Non-Color'
+            for material in materials.values():
+                if not material.use_nodes:
+                    material.use_nodes = True
+                    enabled.append(material)
+                tree = material.node_tree
+                active = tree.nodes.active
+                node = tree.nodes.new('ShaderNodeTexImage')
+                sink_nodes.append((tree, node, active))
+                node.image = sink
+                tree.nodes.active = node
+        baked = {}
         for slot_index, slot in enumerate(obj.material_slots):
-            for polygon in obj.data.polygons:
-                polygon.material_index = slot_index
-            obj.data.update()
             material = slot.material
+            if material is not None and material.as_pointer() not in baked:
+                baked[material.as_pointer()] = _bake_slot(obj, material, size)
             result.append((mesh_id, slot_index,
                            material.name if material else slot.name,
-                           _bake_slot(obj, material, size)))
+                           baked[material.as_pointer()] if material else {}))
     finally:
-        for polygon, index in zip(obj.data.polygons, indices):
-            polygon.material_index = index
-        obj.data.update()
+        for tree, node, active in reversed(sink_nodes):
+            tree.nodes.remove(node)
+            tree.nodes.active = active
+        for material in enabled:
+            material.use_nodes = False
+        if sink is not None:
+            bpy.data.images.remove(sink)
     return result
 
 

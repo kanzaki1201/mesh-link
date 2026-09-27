@@ -19,6 +19,12 @@ def render_enabled(obj, view_layer):
     return enabled(view_layer.layer_collection)
 
 
+def _active_link(socket):
+    if socket is None or not socket.is_linked:
+        return None
+    return next((link for link in socket.links if link.is_valid and not link.is_muted), None)
+
+
 def _extra_channels(material, output):
     result = []
     names = {}
@@ -28,14 +34,22 @@ def _extra_channels(material, output):
         try:
             channel = channel_key(node.channel)
         except ValueError as exc:
-            raise ValueError(f"{material.name}: {node.name}: {exc}") from exc
+            if not node.channel.strip():
+                raise ValueError(f"{material.name}: a Mesh Link Channel node has no name. "
+                                 "Type a name on the node.") from exc
+            raise ValueError(f'{material.name}: Mesh Link Channel "{node.channel}": {exc}') from exc
         if channel in names:
-            raise ValueError(f"{material.name}: {names[channel]} and {node.name}: "
+            raise ValueError(f'{material.name}: Mesh Link Channel "{names[channel]}" and '
+                             f'Mesh Link Channel "{node.channel}": '
                              f"use different Mesh Link Channel names; both clean to {channel}")
-        names[channel] = node.name
+        names[channel] = node.channel
         socket = node.inputs.get('Color')
-        if output is not None and socket is not None and socket.is_linked:
-            result.append((channel, 'EMIT', socket.links[0].from_socket, output))
+        if socket is None:
+            raise ValueError(f'{material.name}: Mesh Link Channel "{node.channel}" has no Color input. '
+                             'Add a new Mesh Link Channel node.')
+        link = _active_link(socket)
+        if output is not None and link is not None:
+            result.append((channel, 'EMIT', link.from_socket, output))
     return result
 
 
@@ -46,9 +60,10 @@ def channels(material):
     output = next((node for node in tree.nodes
                    if node.type == 'OUTPUT_MATERIAL' and node.is_active_output), None)
     extra = _extra_channels(material, output)
-    if output is None or not output.inputs['Surface'].is_linked:
+    surface = _active_link(output.inputs['Surface']) if output is not None else None
+    if surface is None:
         return extra
-    shader = output.inputs['Surface'].links[0].from_node
+    shader = surface.from_node
     result = []
     if shader.type == 'BSDF_PRINCIPLED':
         for input_name, channel, bake_type in (
@@ -58,8 +73,9 @@ def channels(material):
                 ('Metallic', 'metalness', 'EMIT'),
                 ('Roughness', 'roughness', 'EMIT')):
             socket = shader.inputs.get(input_name)
-            if socket is not None and socket.is_linked:
-                result.append((channel, bake_type, socket.links[0].from_socket, output))
+            link = _active_link(socket)
+            if link is not None:
+                result.append((channel, bake_type, link.from_socket, output))
     return result + extra
 
 
@@ -80,7 +96,8 @@ def _bake_channel(obj, material, channel, bake_type, source, output, size):
     tree = material.node_tree
     active = tree.nodes.active
     surface = output.inputs['Surface']
-    original = surface.links[0].from_socket if surface.is_linked else None
+    link = _active_link(surface)
+    original = link.from_socket if link is not None else None
     image = bpy.data.images.new("Mesh Link Bake", width=size, height=size,
                                 alpha=True, float_buffer=False)
     target = None
@@ -192,6 +209,10 @@ def _restore_context(scene, settings, engine, samples, selected, active, mode, o
 def bake_objects(objects, size):
     scene = bpy.context.scene
     view_layer = bpy.context.view_layer
+    visible = [(mesh_id, obj) for mesh_id, obj in objects if render_enabled(obj, view_layer)]
+    for _, obj in visible:
+        for slot in obj.material_slots:
+            channels(slot.material)
     active = view_layer.objects.active
     selected = tuple(bpy.context.selected_objects)
     mode = active.mode if active else 'OBJECT'
@@ -216,9 +237,7 @@ def bake_objects(objects, size):
         bake.use_selected_to_active = False
         bake.use_clear = True
         bpy.ops.object.select_all(action='DESELECT')
-        for mesh_id, obj in objects:
-            if not render_enabled(obj, view_layer):
-                continue
+        for mesh_id, obj in visible:
             obj.select_set(True)
             view_layer.objects.active = obj
             try:

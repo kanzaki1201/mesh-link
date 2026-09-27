@@ -160,6 +160,8 @@ def main():
     tree = material_a.node_tree
     custom_channel = tree.nodes.new('MeshLinkChannelNode')
     custom_channel.channel = 'Shadow Mask'
+    assert custom_channel.draw_label() == 'Mesh Link: Shadow Mask'
+    assert sum(group.name == '.Mesh Link Channel' for group in bpy.data.node_groups) == 1
     mask_node = tree.nodes.new('ShaderNodeRGB')
     mask_node.outputs['Color'].default_value = (0.5, 0.5, 0.5, 1)
     tree.links.new(mask_node.outputs['Color'], custom_channel.inputs['Color'])

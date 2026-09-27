@@ -266,7 +266,7 @@ def test_texture_move_resends_after_last_reference_clears():
 
 
 @pytest.mark.parametrize("name, message", [("", "type a channel name"),
-                                           ("é", "allows only")])
+                                           ("é", "use letters, digits")])
 def test_invalid_channel_name(name, message):
     with pytest.raises(ValueError, match=message):
         channel_key(name)

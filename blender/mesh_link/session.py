@@ -10,7 +10,8 @@ def channel_key(name):
     if not name:
         raise ValueError("type a channel name on the Mesh Link Channel node")
     if not re.fullmatch(r"[a-z0-9_]+", name):
-        raise ValueError("channel name allows only a-z, 0-9, spaces, hyphens, and underscores")
+        raise ValueError("use letters, digits, spaces, hyphens, or underscores "
+                         "(letters are lowercased)")
     return "x_" + name
 
 

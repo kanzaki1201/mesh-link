@@ -12,9 +12,14 @@ class MeshLinkChannelNode(bpy.types.ShaderNodeCustomGroup):
         group = bpy.data.node_groups.get(".Mesh Link Channel")
         if group is None:
             group = bpy.data.node_groups.new(".Mesh Link Channel", 'ShaderNodeTree')
+        if not any(item.item_type == 'SOCKET' and item.in_out == 'INPUT'
+                   and item.name == 'Color' for item in group.interface.items_tree):
             group.interface.new_socket(name="Color", in_out='INPUT',
                                        socket_type='NodeSocketColor')
         self.node_tree = group
+
+    def draw_label(self):
+        return f"Mesh Link: {self.channel}" if self.channel else "Mesh Link Channel"
 
     def draw_buttons(self, _context, layout):
         layout.prop(self, "channel", text="")

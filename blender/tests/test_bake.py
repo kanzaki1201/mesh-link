@@ -15,10 +15,12 @@ def bake(monkeypatch):
 
 def material_with_channels(*names, standard=()):
     shader = types.SimpleNamespace(type='BSDF_PRINCIPLED', inputs={
-        name: types.SimpleNamespace(is_linked=True, links=[types.SimpleNamespace(from_socket=name)])
+        name: types.SimpleNamespace(is_linked=True, links=[types.SimpleNamespace(
+            from_socket=name, is_valid=True, is_muted=False)])
         for name in standard})
     surface = types.SimpleNamespace(is_linked=True,
-                                    links=[types.SimpleNamespace(from_node=shader)])
+                                    links=[types.SimpleNamespace(
+                                        from_node=shader, is_valid=True, is_muted=False)])
     output = types.SimpleNamespace(type='OUTPUT_MATERIAL', is_active_output=True,
                                    inputs={'Surface': surface})
     groups = [types.SimpleNamespace(bl_idname='MeshLinkChannelNode',
@@ -30,15 +32,25 @@ def material_with_channels(*names, standard=()):
                                  node_tree=types.SimpleNamespace(nodes=[output, *groups]))
 
 
-@pytest.mark.parametrize('names, node', [(('',), 'Channel 0'),
-                                        (('é',), 'Channel 0'),
-                                        (('Shadow Mask', 'shadow--mask'), 'Channel 1')])
-def test_channel_name_error_names_material_and_node(bake, names, node):
+@pytest.mark.parametrize('names, message', [
+    (('',), 'Paint: a Mesh Link Channel node has no name. Type a name on the node.'),
+    (('Mask!',), 'Paint: Mesh Link Channel "Mask!": use letters, digits, spaces, '
+                  'hyphens, or underscores (letters are lowercased)'),
+    (('Shadow Mask', 'shadow--mask'),
+     'Paint: Mesh Link Channel "Shadow Mask" and Mesh Link Channel "shadow--mask": '
+     'use different Mesh Link Channel names; both clean to x_shadow_mask'),
+])
+def test_channel_name_errors(bake, names, message):
     with pytest.raises(ValueError) as info:
         bake.channels(material_with_channels(*names))
-    assert 'Paint' in str(info.value) and node in str(info.value)
-    if len(names) == 2:
-        assert 'Channel 0' in str(info.value)
+    assert str(info.value) == message
+
+
+def test_channel_without_color_input_stops_bake(bake):
+    material = material_with_channels('Shadow Mask')
+    material.node_tree.nodes[1].inputs.clear()
+    with pytest.raises(ValueError, match='Paint: Mesh Link Channel "Shadow Mask" has no Color input'):
+        bake.channels(material)
 
 
 def test_valid_unlinked_channel_has_no_bake(bake):
@@ -49,7 +61,8 @@ def test_channel_bakes_with_unlinked_surface(bake):
     material = material_with_channels('mask')
     material.node_tree.nodes[0].inputs['Surface'].is_linked = False
     material.node_tree.nodes[1].inputs['Color'] = types.SimpleNamespace(
-        is_linked=True, links=[types.SimpleNamespace(from_socket='source')])
+        is_linked=True, links=[types.SimpleNamespace(
+            from_socket='source', is_valid=True, is_muted=False)])
     assert bake.channels(material)[0][:3] == ('x_mask', 'EMIT', 'source')
 
 
@@ -69,6 +82,40 @@ def test_metalness_and_roughness_only_when_linked(bake):
     material.node_tree.nodes[0].inputs['Surface'].links[0].from_node.inputs[
         'Metallic'].is_linked = False
     assert bake.channels(material) == []
+
+
+@pytest.mark.parametrize('flag', ['is_muted', 'is_valid'])
+def test_muted_or_invalid_links_are_unlinked(bake, flag):
+    material = material_with_channels('Mask', standard=('Metallic',))
+    channel = material.node_tree.nodes[1].inputs['Color']
+    channel.is_linked = True
+    channel.links = [types.SimpleNamespace(
+        from_socket='mask', is_valid=True, is_muted=False)]
+    surface = material.node_tree.nodes[0].inputs['Surface']
+    metallic = surface.links[0].from_node.inputs['Metallic']
+    for socket, expected in ((channel, ['metalness']), (metallic, ['x_mask']),
+                             (surface, ['x_mask'])):
+        link = socket.links[0]
+        setattr(link, flag, flag == 'is_muted')
+        assert [entry[0] for entry in bake.channels(material)] == expected
+        setattr(link, flag, flag == 'is_valid')
+
+
+@pytest.mark.parametrize('missing_color', [False, True])
+def test_channel_errors_before_first_bake(bake, monkeypatch, missing_color):
+    good = material_with_channels('Mask')
+    bad = material_with_channels('Mask' if missing_color else 'Mask!')
+    if missing_color:
+        bad.node_tree.nodes[1].inputs.clear()
+    objects = [('good', types.SimpleNamespace(material_slots=[types.SimpleNamespace(material=good)])),
+               ('bad', types.SimpleNamespace(material_slots=[types.SimpleNamespace(material=bad)]))]
+    calls = []
+    monkeypatch.setattr(bake, 'render_enabled', lambda _obj, _layer: True)
+    monkeypatch.setattr(bake, '_bake_object', lambda *_args: calls.append(1))
+    bake.bpy.context = types.SimpleNamespace(scene=object(), view_layer=object())
+    with pytest.raises(ValueError, match='has no Color input' if missing_color else '"Mask!"'):
+        bake.bake_objects(objects, 64)
+    assert calls == []
 
 
 def test_repeated_material_bakes_once(bake, monkeypatch):

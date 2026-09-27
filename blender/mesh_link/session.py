@@ -5,10 +5,13 @@ from collections import Counter
 from .transport import Transport
 
 
-def channel_key(label):
-    if not re.fullmatch(r"[a-z0-9_]+", label):
-        raise ValueError(f"Invalid Mesh Link Channel label: {label}")
-    return "x_" + label
+def channel_key(name):
+    name = re.sub(r"[ -]+", "_", name.strip().lower())
+    if not name:
+        raise ValueError("type a channel name on the Mesh Link Channel node")
+    if not re.fullmatch(r"[a-z0-9_]+", name):
+        raise ValueError("channel name allows only a-z, 0-9, spaces, hyphens, and underscores")
+    return "x_" + name
 
 
 def _slot_textures(material_name, channels):

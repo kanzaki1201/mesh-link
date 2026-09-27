@@ -3,7 +3,7 @@ CLASSES = ()
 
 def register():
     import bpy
-    from . import handlers, panel
+    from . import channel_node, handlers, panel
 
     class MeshLinkToken(bpy.types.PropertyGroup):
         token: bpy.props.StringProperty(options={'HIDDEN'})
@@ -23,6 +23,7 @@ def register():
     CLASSES = (MeshLinkToken, MeshLinkPreferences, *panel.CLASSES)
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    channel_node.register()
     bpy.types.Scene.mesh_link_host = bpy.props.StringProperty(
         name="Host", default="127.0.0.1")
     bpy.types.Scene.mesh_link_port = bpy.props.IntProperty(
@@ -32,9 +33,10 @@ def register():
 
 def unregister():
     import bpy
-    from . import handlers
+    from . import channel_node, handlers
 
     handlers.unregister()
+    channel_node.unregister()
     del bpy.types.Scene.mesh_link_port
     del bpy.types.Scene.mesh_link_host
     for cls in reversed(CLASSES):

@@ -265,11 +265,16 @@ def test_texture_move_resends_after_last_reference_clears():
         assert messages[1][1] == red
 
 
-@pytest.mark.parametrize("label", ["", "Mask", "two words", "a-b", "é"])
-def test_invalid_channel_label(label):
-    with pytest.raises(ValueError, match="label"):
-        channel_key(label)
+@pytest.mark.parametrize("name, message", [("", "type a channel name"),
+                                           ("é", "allows only")])
+def test_invalid_channel_name(name, message):
+    with pytest.raises(ValueError, match=message):
+        channel_key(name)
 
 
-def test_valid_channel_label():
-    assert channel_key("mask_2") == "x_mask_2"
+@pytest.mark.parametrize("name, key", [("Metallic", "x_metallic"),
+                                        ("Shadow Mask", "x_shadow_mask"),
+                                        (" rim--light ", "x_rim_light"),
+                                        ("mask_2", "x_mask_2")])
+def test_valid_channel_name(name, key):
+    assert channel_key(name) == key

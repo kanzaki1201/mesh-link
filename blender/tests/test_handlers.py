@@ -344,7 +344,6 @@ def test_bake_skips_hidden_sent_objects_and_counts_them(handlers, monkeypatch):
         running=True, ready=True, capabilities={'material', 'texture'},
         send_bakes=lambda _slots: 1, status='Connected')
     received = []
-    monkeypatch.setattr(bake, 'ensure_channel_group', lambda: None)
     monkeypatch.setattr(bake, 'bake_objects',
                         lambda objects, _size: received.extend(objects) or [])
     preferences = types.SimpleNamespace(addons={

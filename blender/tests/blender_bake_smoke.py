@@ -68,6 +68,14 @@ def assert_color(data, source):
         bpy.data.images.remove(image)
 
 
+def assert_linear(data, value, name):
+    image = load_png(data, name, 'Non-Color')
+    try:
+        assert all(abs(actual - value) <= 2 / 255 for actual in center(image))
+    finally:
+        bpy.data.images.remove(image)
+
+
 def make_object(name, quads):
     vertices = []
     faces = []
@@ -103,23 +111,24 @@ def make_material(name, image):
 def assert_bakes(result, color_a, red, blue):
     textures = {(mesh_id, slot): channels for mesh_id, slot, _, channels in result}
     assert not any(mesh_id == 'hidden' for mesh_id, *_ in result)
-    assert textures[('a', 0)].keys() == {'normal', 'color', 'x_mask'}
+    assert textures[('a', 0)].keys() == {
+        'normal', 'color', 'metalness', 'roughness', 'x_shadow_mask'}
     assert textures[('a', 1)] == {}
-    assert textures[('unlinked', 0)].keys() == {'x_mask'}
+    assert textures[('unlinked', 0)].keys() == {'x_shadow_mask'}
     assert all(data.startswith(b'\x89PNG\r\n\x1a\n')
                for channels in textures.values() for data in channels.values())
     assert_color(textures[('a', 0)]['color'], color_a)
     assert_color(textures[('b', 0)]['color'], red)
     assert_color(textures[('b', 1)]['color'], blue)
-    mask_result = load_png(textures[('a', 0)]['x_mask'], 'Smoke Mask Result', 'Non-Color')
-    try:
-        assert all(abs(value - 0.5) <= 2 / 255 for value in center(mask_result))
-    finally:
-        bpy.data.images.remove(mask_result)
+    assert_linear(textures[('a', 0)]['x_shadow_mask'], 0.5, 'Smoke Mask Result')
+    assert_linear(textures[('a', 0)]['metalness'], 0.25, 'Smoke Metallic Result')
+    assert_linear(textures[('a', 0)]['roughness'], 0.75, 'Smoke Roughness Result')
 
 
 def main():
     bake = load_bake()
+    from mesh_link import channel_node
+    channel_node.register()
     obj_a = make_object('Smoke Plane', [(-1, 1)])
     obj_b = make_object('Smoke Overlap', [(-2, 0), (0, 2)])
     obj_unlinked = make_object('Smoke Unlinked', [(-1, 1)])
@@ -135,9 +144,8 @@ def main():
     unlinked_tree = material_unlinked.node_tree
     for link in list(unlinked_tree.links):
         unlinked_tree.links.remove(link)
-    unlinked_channel = unlinked_tree.nodes.new('ShaderNodeGroup')
-    unlinked_channel.node_tree = bake.ensure_channel_group()
-    unlinked_channel.label = 'mask'
+    unlinked_channel = unlinked_tree.nodes.new('MeshLinkChannelNode')
+    unlinked_channel.channel = 'Shadow Mask'
     unlinked_color = unlinked_tree.nodes.new('ShaderNodeRGB')
     unlinked_color.outputs['Color'].default_value = (0.5, 0.5, 0.5, 1)
     unlinked_tree.links.new(unlinked_color.outputs['Color'], unlinked_channel.inputs['Color'])
@@ -150,12 +158,18 @@ def main():
     obj_hidden.hide_set(True)
     obj_b.data.polygons[1].material_index = 1
     tree = material_a.node_tree
-    channel_node = tree.nodes.new('ShaderNodeGroup')
-    channel_node.node_tree = bake.ensure_channel_group()
-    channel_node.label = 'mask'
+    custom_channel = tree.nodes.new('MeshLinkChannelNode')
+    custom_channel.channel = 'Shadow Mask'
     mask_node = tree.nodes.new('ShaderNodeRGB')
     mask_node.outputs['Color'].default_value = (0.5, 0.5, 0.5, 1)
-    tree.links.new(mask_node.outputs['Color'], channel_node.inputs['Color'])
+    tree.links.new(mask_node.outputs['Color'], custom_channel.inputs['Color'])
+    shader = tree.nodes.get('Principled BSDF')
+    metallic = tree.nodes.new('ShaderNodeValue')
+    metallic.outputs['Value'].default_value = 0.25
+    tree.links.new(metallic.outputs['Value'], shader.inputs['Metallic'])
+    roughness = tree.nodes.new('ShaderNodeValue')
+    roughness.outputs['Value'].default_value = 0.75
+    tree.links.new(roughness.outputs['Value'], shader.inputs['Roughness'])
     normal_node = tree.nodes.new('ShaderNodeNewGeometry')
     tree.links.new(normal_node.outputs['Normal'],
                    tree.nodes.get('Principled BSDF').inputs['Normal'])

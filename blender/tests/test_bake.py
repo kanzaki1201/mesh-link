@@ -13,34 +13,40 @@ def bake(monkeypatch):
     sys.modules.pop('mesh_link.bake', None)
 
 
-def material_with_labels(*labels):
-    shader = types.SimpleNamespace(type='BSDF_PRINCIPLED', inputs={})
+def material_with_channels(*names, standard=()):
+    shader = types.SimpleNamespace(type='BSDF_PRINCIPLED', inputs={
+        name: types.SimpleNamespace(is_linked=True, links=[types.SimpleNamespace(from_socket=name)])
+        for name in standard})
     surface = types.SimpleNamespace(is_linked=True,
                                     links=[types.SimpleNamespace(from_node=shader)])
     output = types.SimpleNamespace(type='OUTPUT_MATERIAL', is_active_output=True,
                                    inputs={'Surface': surface})
-    groups = [types.SimpleNamespace(type='GROUP', node_tree=types.SimpleNamespace(
-        name='Mesh Link Channel'), name=f'Channel {index}', label=label,
+    groups = [types.SimpleNamespace(bl_idname='MeshLinkChannelNode',
+        name=f'Channel {index}', channel=name,
         inputs={'Color': types.SimpleNamespace(is_linked=False)})
-        for index, label in enumerate(labels)]
+        for index, name in enumerate(names)]
+    output.bl_idname = 'ShaderNodeOutputMaterial'
     return types.SimpleNamespace(name='Paint', use_nodes=True,
                                  node_tree=types.SimpleNamespace(nodes=[output, *groups]))
 
 
-@pytest.mark.parametrize('labels, node', [(('Bad',), 'Channel 0'),
-                                         (('mask', 'mask'), 'Channel 1')])
-def test_channel_label_error_names_material_and_node(bake, labels, node):
+@pytest.mark.parametrize('names, node', [(('',), 'Channel 0'),
+                                        (('é',), 'Channel 0'),
+                                        (('Shadow Mask', 'shadow--mask'), 'Channel 1')])
+def test_channel_name_error_names_material_and_node(bake, names, node):
     with pytest.raises(ValueError) as info:
-        bake.channels(material_with_labels(*labels))
+        bake.channels(material_with_channels(*names))
     assert 'Paint' in str(info.value) and node in str(info.value)
+    if len(names) == 2:
+        assert 'Channel 0' in str(info.value)
 
 
 def test_valid_unlinked_channel_has_no_bake(bake):
-    assert bake.channels(material_with_labels('mask_2')) == []
+    assert bake.channels(material_with_channels('mask_2')) == []
 
 
 def test_channel_bakes_with_unlinked_surface(bake):
-    material = material_with_labels('mask')
+    material = material_with_channels('mask')
     material.node_tree.nodes[0].inputs['Surface'].is_linked = False
     material.node_tree.nodes[1].inputs['Color'] = types.SimpleNamespace(
         is_linked=True, links=[types.SimpleNamespace(from_socket='source')])
@@ -48,8 +54,20 @@ def test_channel_bakes_with_unlinked_surface(bake):
 
 
 def test_material_without_nodes_has_no_channels(bake):
-    material = material_with_labels('mask')
+    material = material_with_channels('mask')
     material.use_nodes = False
+    assert bake.channels(material) == []
+
+
+def test_metalness_and_roughness_only_when_linked(bake):
+    material = material_with_channels(standard=('Metallic', 'Roughness'))
+    assert [entry[:3] for entry in bake.channels(material)] == [
+        ('metalness', 'EMIT', 'Metallic'), ('roughness', 'EMIT', 'Roughness')]
+    material.node_tree.nodes[0].inputs['Surface'].links[0].from_node.inputs[
+        'Roughness'].is_linked = False
+    assert [entry[0] for entry in bake.channels(material)] == ['metalness']
+    material.node_tree.nodes[0].inputs['Surface'].links[0].from_node.inputs[
+        'Metallic'].is_linked = False
     assert bake.channels(material) == []
 
 

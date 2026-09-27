@@ -19,28 +19,20 @@ def render_enabled(obj, view_layer):
     return enabled(view_layer.layer_collection)
 
 
-def ensure_channel_group():
-    group = bpy.data.node_groups.get("Mesh Link Channel")
-    if group is None:
-        group = bpy.data.node_groups.new("Mesh Link Channel", 'ShaderNodeTree')
-        group.interface.new_socket(name="Color", in_out='INPUT',
-                                   socket_type='NodeSocketColor')
-    return group
-
-
 def _extra_channels(material, output):
     result = []
-    labels = set()
+    names = {}
     for node in material.node_tree.nodes:
-        if node.type != 'GROUP' or node.node_tree is None or node.node_tree.name != 'Mesh Link Channel':
+        if node.bl_idname != 'MeshLinkChannelNode':
             continue
         try:
-            channel = channel_key(node.label)
+            channel = channel_key(node.channel)
         except ValueError as exc:
             raise ValueError(f"{material.name}: {node.name}: {exc}") from exc
-        if channel in labels:
-            raise ValueError(f"{material.name}: {node.name}: duplicate Mesh Link Channel label")
-        labels.add(channel)
+        if channel in names:
+            raise ValueError(f"{material.name}: {names[channel]} and {node.name}: "
+                             f"use different Mesh Link Channel names; both clean to {channel}")
+        names[channel] = node.name
         socket = node.inputs.get('Color')
         if output is not None and socket is not None and socket.is_linked:
             result.append((channel, 'EMIT', socket.links[0].from_socket, output))
@@ -62,7 +54,9 @@ def channels(material):
         for input_name, channel, bake_type in (
                 ('Normal', 'normal', 'NORMAL'),
                 ('Base Color', 'color', 'EMIT'),
-                ('Emission Color', 'emissive', 'EMIT')):
+                ('Emission Color', 'emissive', 'EMIT'),
+                ('Metallic', 'metalness', 'EMIT'),
+                ('Roughness', 'roughness', 'EMIT')):
             socket = shader.inputs.get(input_name)
             if socket is not None and socket.is_linked:
                 result.append((channel, bake_type, socket.links[0].from_socket, output))

@@ -216,7 +216,6 @@ def bake_and_send(context):
 
     if not can_bake():
         raise ValueError('Listener does not support material and texture')
-    bake.ensure_channel_group()
     sent = [(mesh_id, obj) for mesh_id, obj in _sync.objects(context.view_layer).items()
             if mesh_id in _sync.sent]
     objects = [(mesh_id, obj) for mesh_id, obj in sent

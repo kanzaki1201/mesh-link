@@ -501,22 +501,22 @@ namespace Malloc.MeshLink.Tests
                 blender.Send(TextureJson(id, png), png);
                 blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + id + "\"}"));
                 WaitUntil(() => BlockTexture(0, "_MainTex") != null);
-                var shader = ShaderUtil.CreateShaderAsset(
-                    "Shader \"Hidden/MeshLinkUndo\" { Properties { _BaseMap(\"Base\", 2D) = \"white\" {} } SubShader { Pass {} } }");
-                try
+                textureMap = ScriptableObject.CreateInstance<MeshLinkMaterialMap>();
+                owner.MaterialMap = textureMap;
+                textureMaterialB = new Material(Shader.Find("Standard"));
+                textureMap.TextureBindings.Add(new TextureBindingEntry
                 {
-                    textureMaterialB = new Material(shader);
-                    Undo.FlushUndoRecordObjects();
-                    Undo.IncrementCurrentGroup();
-                    session.SetMaterial(owner, "mesh-a", textureMaterialB);
-                    Undo.FlushUndoRecordObjects();
-                    Assert.That(BlockTexture(0, "_BaseMap"), Is.Not.Null);
-                    Undo.PerformUndo();
-                    Assert.That(session.FindRenderer("mesh-a").sharedMaterial, Is.SameAs(textureMaterialA));
-                    Assert.That(BlockTexture(0, "_MainTex"), Is.Not.Null);
-                    Assert.That(BlockTexture(0, "_BaseMap"), Is.Null);
-                }
-                finally { UnityEngine.Object.DestroyImmediate(shader); }
+                    material = textureMaterialB, channel = "color", property = "_DetailAlbedoMap"
+                });
+                Undo.FlushUndoRecordObjects();
+                Undo.IncrementCurrentGroup();
+                session.SetMaterial(owner, "mesh-a", textureMaterialB);
+                Undo.FlushUndoRecordObjects();
+                Assert.That(BlockTexture(0, "_DetailAlbedoMap"), Is.Not.Null);
+                Undo.PerformUndo();
+                Assert.That(session.FindRenderer("mesh-a").sharedMaterial, Is.SameAs(textureMaterialA));
+                Assert.That(BlockTexture(0, "_MainTex"), Is.Not.Null);
+                Assert.That(BlockTexture(0, "_DetailAlbedoMap"), Is.Null);
             }
         }
 

@@ -193,6 +193,8 @@ namespace Malloc.MeshLink
                     if (texture == null) continue;
                     block.SetTexture(property, texture);
                 }
+                // Unity ignores a block that matches the current one by value, even under another property name.
+                renderer.SetPropertyBlock(null, slot.Key);
                 renderer.SetPropertyBlock(block, slot.Key);
             }
         }

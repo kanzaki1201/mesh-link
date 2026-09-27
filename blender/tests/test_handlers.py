@@ -316,3 +316,27 @@ def test_hidden_geometry_waits_until_visible(setup):
     first.visible = True
     sync.tick(view)
     assert kinds(link) == ['mesh_full']
+
+
+def test_bake_skips_hidden_sent_objects_and_counts_them(handlers, monkeypatch):
+    from mesh_link import bake
+
+    visible = types.SimpleNamespace(visible_get=lambda **_kw: True, hide_render=False)
+    hidden = types.SimpleNamespace(visible_get=lambda **_kw: False, hide_render=False)
+    render_off = types.SimpleNamespace(visible_get=lambda **_kw: True, hide_render=True)
+    handlers._sync = types.SimpleNamespace(
+        objects=lambda _view: {'a': visible, 'b': hidden, 'c': render_off},
+        sent={'a', 'b', 'c'})
+    handlers._session = types.SimpleNamespace(
+        running=True, ready=True, capabilities={'material', 'texture'},
+        send_bakes=lambda _slots: 1, status='Connected')
+    received = []
+    monkeypatch.setattr(bake, 'ensure_channel_group', lambda: None)
+    monkeypatch.setattr(bake, 'bake_objects',
+                        lambda objects, _size: received.extend(objects) or [])
+    preferences = types.SimpleNamespace(addons={
+        'mesh_link': types.SimpleNamespace(preferences=types.SimpleNamespace(texture_size='512'))})
+    context = types.SimpleNamespace(view_layer=object(), preferences=preferences)
+    handlers.bake_and_send(context)
+    assert received == [('a', visible)]
+    assert handlers._session.status == 'Sent 1 textures, skipped 2 hidden objects'

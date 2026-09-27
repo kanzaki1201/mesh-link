@@ -217,11 +217,13 @@ def bake_and_send(context):
     if not can_bake():
         raise ValueError('Listener does not support material and texture')
     bake.ensure_channel_group()
-    objects = [(mesh_id, obj) for mesh_id, obj in _sync.objects(context.view_layer).items()
-               if mesh_id in _sync.sent]
+    sent = [(mesh_id, obj) for mesh_id, obj in _sync.objects(context.view_layer).items()
+            if mesh_id in _sync.sent]
+    objects = [(mesh_id, obj) for mesh_id, obj in sent
+               if obj.visible_get(view_layer=context.view_layer) and not obj.hide_render]
     size = int(context.preferences.addons[__package__].preferences.texture_size)
     count = _session.send_bakes(bake.bake_objects(objects, size))
-    _session.status = f'Sent {count} textures'
+    _session.status = f'Sent {count} textures, skipped {len(sent) - len(objects)} hidden objects'
 
 
 def connect(context):

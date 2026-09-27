@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from mesh_link.encode import encode_mesh_delta, encode_mesh_full
-from mesh_link.session import Session, channel_key
+from mesh_link.session import Session, _bake_messages, channel_key
 from mesh_link.transport import encode_frame, read_frame
 
 
@@ -178,11 +178,6 @@ def test_texture_order_resend_clear_and_request():
         transmit(sock, type="request_texture", texture_id=ids["Paint color.png"])
         receive_until(session, lambda: not incoming.empty())
         assert incoming.get(timeout=3)[1] == red
-        transmit(sock, type="request_texture", texture_id=ids["Paint x_mask.png"])
-        receive_until(session, lambda: not incoming.empty())
-        error, _ = incoming.get(timeout=3)
-        assert error["type"] == "error"
-        assert error["texture_id"] == ids["Paint x_mask.png"]
         assert session.send_bakes([("mesh", 1, "Paint", {})]) == 0
         incoming.get(timeout=3)
         assert session.send_bakes([("mesh", 1, "Paint", {"color": red})]) == 1
@@ -199,6 +194,58 @@ def test_texture_queue_refusal_sends_nothing():
             session.send_bakes([("mesh", 0, "Paint", {"color": b"x" * 100})])
         assert incoming.empty()
         assert session._slots == {} and session._textures == {}
+
+
+def test_batch_refusal_is_atomic():
+    session = Session('localhost', 1)
+    session.ready = session.running = True
+    session.capabilities = {'material', 'texture'}
+    slots = [('mesh', 0, 'Paint', {'color': b'one'})]
+    messages, _, _ = _bake_messages(slots, {})
+    session.transport.max_queue_bytes = len(encode_frame(*messages[0]))
+    with pytest.raises(ValueError, match='queue limit'):
+        session.send_bakes(slots)
+    assert not session.transport._outbound
+    assert session.transport._out_bytes == 0
+    assert session._slots == session._textures == {}
+
+
+def test_texture_references_pruned_by_mesh_changes():
+    session = Session('localhost', 1)
+    session.ready = session.running = True
+    session.capabilities = {'material', 'texture'}
+    session.send_bakes([('mesh', 0, 'A', {'color': b'a'}),
+                        ('mesh', 1, 'B', {'color': b'b'})])
+    assert len(session._textures) == 2
+    assert session.send({'type': 'mesh_full', 'mesh_id': 'mesh', 'material_names': ['A']})
+    assert len(session._slots) == len(session._textures) == 1
+    assert session.send({'type': 'object_delete', 'link_id': 'mesh'})
+    assert session._slots == session._textures == {}
+
+
+def test_refused_texture_reply_sets_status():
+    session = Session('localhost', 1)
+    session._textures['id'] = ('image.png', b'data')
+    session.transport.max_queue_bytes = 1
+    session._receive({'type': 'request_texture', 'texture_id': 'id'})
+    assert 'queue limit' in session.status
+
+
+def test_unknown_texture_request_is_ignored():
+    session = Session('localhost', 1)
+    session._receive({'type': 'request_texture', 'texture_id': 'missing'})
+    assert not session.transport._outbound
+    assert session.status == 'Disconnected'
+
+
+def test_stopped_transport_reports_disconnect_reason():
+    session = Session('localhost', 1)
+    session.ready = session.running = True
+    session.capabilities = {'material', 'texture'}
+    session.status = 'Listener disconnected'
+    session.transport._stop.set()
+    with pytest.raises(ValueError, match='Listener disconnected'):
+        session.send_bakes([('mesh', 0, 'Paint', {'color': b'png'})])
 
 
 def test_texture_move_resends_after_last_reference_clears():

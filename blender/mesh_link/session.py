@@ -104,10 +104,14 @@ class Session:
                           for texture_id, _ in references.values()}
 
     def send_bakes(self, slots):
+        if self.transport._stop.is_set():
+            raise ValueError(self.status if self.status != 'Connected' else 'Listener disconnected')
         if not self.ready or not self.running or not {'material', 'texture'} <= self.capabilities:
             raise ValueError("Listener does not support material and texture")
         messages, new_slots, blobs = _bake_messages(slots, self._slots)
         if not self.transport.send_batch(messages):
+            if self.transport._stop.is_set():
+                raise ValueError(self.status if self.status != 'Connected' else 'Listener disconnected')
             raise ValueError("Texture messages exceed send queue limit")
         self._slots = new_slots
         available = self._textures | blobs
@@ -138,13 +142,15 @@ class Session:
         elif kind == "request_texture":
             texture_id = header.get("texture_id")
             blob = self._textures.get(texture_id)
-            if blob is None:
-                self.transport.send({"type": "error", "texture_id": texture_id,
-                                     "message": f"Unknown texture_id: {texture_id}"})
-            else:
+            if blob is not None:
                 name, data = blob
-                self.transport.send({"type": "texture", "texture_id": texture_id,
-                                     "name": name, "binary_size": len(data)}, data)
+                try:
+                    sent = self.transport.send({"type": "texture", "texture_id": texture_id,
+                                                "name": name, "binary_size": len(data)}, data)
+                except ValueError:
+                    sent = False
+                if not sent:
+                    self.status = "Texture reply exceeds send queue limit"
 
     def _accept_hello(self, header):
         if header.get("protocol") != 1:

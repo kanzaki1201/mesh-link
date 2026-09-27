@@ -36,14 +36,14 @@ def solid_png(rgb):
             + chunk(b'IEND', b''))
 
 
-def load_png(data, name):
+def load_png(data, name, color_space='sRGB'):
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as stream:
         stream.write(data)
         path = Path(stream.name)
     try:
         image = bpy.data.images.load(str(path))
         image.name = name
-        image.colorspace_settings.name = 'sRGB'
+        image.colorspace_settings.name = color_space
         image.pack()
         return image
     finally:
@@ -99,28 +99,69 @@ def make_material(name, image):
     return material
 
 
+def assert_bakes(result, color_a, red, blue):
+    textures = {(mesh_id, slot): channels for mesh_id, slot, _, channels in result}
+    assert not any(mesh_id == 'hidden' for mesh_id, *_ in result)
+    assert textures[('a', 0)].keys() == {'normal', 'color', 'x_mask'}
+    assert textures[('a', 1)] == {}
+    assert textures[('unlinked', 0)].keys() == {'x_mask'}
+    assert all(data.startswith(b'\x89PNG\r\n\x1a\n')
+               for channels in textures.values() for data in channels.values())
+    assert_color(textures[('a', 0)]['color'], color_a)
+    assert_color(textures[('b', 0)]['color'], red)
+    assert_color(textures[('b', 1)]['color'], blue)
+    mask_result = load_png(textures[('a', 0)]['x_mask'], 'Smoke Mask Result', 'Non-Color')
+    try:
+        assert all(abs(value - 0.5) <= 2 / 255 for value in center(mask_result))
+    finally:
+        bpy.data.images.remove(mask_result)
+
+
 def main():
     bake = load_bake()
     obj_a = make_object('Smoke Plane', [(-1, 1)])
     obj_b = make_object('Smoke Overlap', [(-2, 0), (0, 2)])
+    obj_unlinked = make_object('Smoke Unlinked', [(-1, 1)])
+    obj_hidden = make_object('Smoke Hidden', [(-1, 1)])
     color_a = load_png(solid_png((204, 26, 51)), 'Smoke Color')
-    mask = load_png(solid_png((64, 64, 64)), 'Smoke Mask')
     red = load_png(solid_png((255, 0, 0)), 'Smoke Red')
     blue = load_png(solid_png((0, 0, 255)), 'Smoke Blue')
     material_a = make_material('Smoke Paint', color_a)
     material_red = make_material('Smoke Red Paint', red)
     material_blue = make_material('Smoke Blue Paint', blue)
+    material_unlinked = bpy.data.materials.new('Smoke Unlinked Paint')
+    material_unlinked.use_nodes = True
+    unlinked_tree = material_unlinked.node_tree
+    for link in list(unlinked_tree.links):
+        unlinked_tree.links.remove(link)
+    unlinked_channel = unlinked_tree.nodes.new('ShaderNodeGroup')
+    unlinked_channel.node_tree = bake.ensure_channel_group()
+    unlinked_channel.label = 'mask'
+    unlinked_color = unlinked_tree.nodes.new('ShaderNodeRGB')
+    unlinked_color.outputs['Color'].default_value = (0.5, 0.5, 0.5, 1)
+    unlinked_tree.links.new(unlinked_color.outputs['Color'], unlinked_channel.inputs['Color'])
     obj_a.data.materials.append(material_a)
+    obj_a.data.materials.append(None)
     obj_b.data.materials.append(material_red)
     obj_b.data.materials.append(material_blue)
+    obj_unlinked.data.materials.append(material_unlinked)
+    obj_hidden.data.materials.append(material_a)
+    obj_hidden.hide_set(True)
     obj_b.data.polygons[1].material_index = 1
     tree = material_a.node_tree
     channel_node = tree.nodes.new('ShaderNodeGroup')
     channel_node.node_tree = bake.ensure_channel_group()
     channel_node.label = 'mask'
-    mask_node = tree.nodes.new('ShaderNodeTexImage')
-    mask_node.image = mask
+    mask_node = tree.nodes.new('ShaderNodeRGB')
+    mask_node.outputs['Color'].default_value = (0.5, 0.5, 0.5, 1)
     tree.links.new(mask_node.outputs['Color'], channel_node.inputs['Color'])
+    normal_node = tree.nodes.new('ShaderNodeNewGeometry')
+    tree.links.new(normal_node.outputs['Normal'],
+                   tree.nodes.get('Principled BSDF').inputs['Normal'])
+    second_uv = obj_a.data.uv_layers.new(name='Other UV')
+    second_uv.active_render = True
+    obj_a.data.uv_layers.active_index = 0
+    material_a.paint_active_slot = 0
 
     obj_a.select_set(True)
     bpy.context.view_layer.objects.active = obj_a
@@ -128,37 +169,70 @@ def main():
     old_engine = scene.render.engine
     old_samples = scene.cycles.samples
     old_bake = {name: getattr(scene.render.bake, name) for name in (
-        'target', 'normal_space', 'use_selected_to_active', 'use_clear')}
-    materials = (material_a, material_red, material_blue)
+        'target', 'normal_space', 'normal_r', 'normal_g', 'normal_b',
+        'use_selected_to_active', 'use_clear')}
+    materials = (material_a, material_red, material_blue, material_unlinked)
     old_trees = [(material, links(material.node_tree), len(material.node_tree.nodes),
                   material.node_tree.nodes.active) for material in materials]
     old_indices = [[polygon.material_index for polygon in obj.data.polygons]
                    for obj in (obj_a, obj_b)]
     old_images = len(bpy.data.images)
+    old_materials = len(bpy.data.materials)
     old_selection = tuple(bpy.context.selected_objects)
+    objects = (obj_a, obj_b, obj_unlinked)
+    old_slots = [[slot.material for slot in obj.material_slots] for obj in objects]
+    old_paint = {material.name: material.paint_active_slot for material in materials}
     bpy.ops.object.mode_set(mode='EDIT')
-    result = bake.bake_objects([('a', obj_a), ('b', obj_b)], 64)
-    textures = {(mesh_id, slot): channels for mesh_id, slot, _, channels in result}
-    assert textures[('a', 0)].keys() == {'color', 'x_mask'}
-    assert all(data.startswith(b'\x89PNG\r\n\x1a\n')
-               for channels in textures.values() for data in channels.values())
-    assert_color(textures[('a', 0)]['color'], color_a)
-    assert_color(textures[('b', 0)]['color'], red)
-    assert_color(textures[('b', 1)]['color'], blue)
-    assert scene.render.engine == old_engine
-    assert scene.cycles.samples == old_samples
-    assert all(getattr(scene.render.bake, name) == value for name, value in old_bake.items())
-    assert obj_a.mode == 'EDIT'
-    assert bpy.context.view_layer.objects.active == obj_a
-    assert tuple(bpy.context.selected_objects) == old_selection
-    for material, old_links, old_nodes, old_active in old_trees:
-        tree = material.node_tree
-        assert links(tree) == old_links, material.name
-        assert len(tree.nodes) == old_nodes, material.name
-        assert tree.nodes.active == old_active, material.name
-    assert [[polygon.material_index for polygon in obj.data.polygons]
-            for obj in (obj_a, obj_b)] == old_indices
-    assert len(bpy.data.images) == old_images
+    result = bake.bake_objects([('a', obj_a), ('b', obj_b),
+                                ('unlinked', obj_unlinked), ('hidden', obj_hidden)], 64)
+    assert_bakes(result, color_a, red, blue)
+
+    def assert_restored():
+        assert scene.render.engine == old_engine
+        assert scene.cycles.samples == old_samples
+        assert all(getattr(scene.render.bake, name) == value for name, value in old_bake.items())
+        assert obj_a.mode == 'EDIT'
+        assert bpy.context.view_layer.objects.active == obj_a
+        assert tuple(bpy.context.selected_objects) == old_selection
+        assert obj_a.data.uv_layers['Other UV'].active_render
+        assert [[slot.material for slot in obj.material_slots] for obj in objects] == old_slots
+        assert all(material.paint_active_slot == old_paint[material.name]
+                   for material in materials)
+        for material, old_links, old_nodes, old_active in old_trees:
+            tree = material.node_tree
+            assert links(tree) == old_links, material.name
+            assert len(tree.nodes) == old_nodes, material.name
+            assert tree.nodes.active == old_active, material.name
+        assert [[polygon.material_index for polygon in obj.data.polygons]
+                for obj in (obj_a, obj_b)] == old_indices
+        assert len(bpy.data.images) == old_images
+        assert len(bpy.data.materials) == old_materials
+
+    assert_restored()
+    original_channel = bake._bake_channel
+    calls = []
+
+    def fail_second(*args):
+        current = scene.render.bake
+        assert (current.normal_r, current.normal_g, current.normal_b) == ('POS_X', 'POS_Y', 'POS_Z')
+        assert obj_a.data.uv_layers.active.active_render
+        assert obj_a.material_slots[1].material is not None
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError('forced mid-bake failure')
+        return original_channel(*args)
+
+    bake._bake_channel = fail_second
+    try:
+        try:
+            bake.bake_objects([('a', obj_a)], 64)
+        except RuntimeError as exc:
+            assert str(exc) == 'forced mid-bake failure'
+        else:
+            raise AssertionError('second channel did not fail')
+    finally:
+        bake._bake_channel = original_channel
+    assert_restored()
 
 
 try:

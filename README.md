@@ -170,4 +170,5 @@ The Blender extension is original code and is not derived from the Nomad Link Bl
 
 ## License
 
-MIT; see [LICENSE](LICENSE).
+- Unity package (`unity/`): MIT; see [unity/com.malloc.mesh-link/LICENSE](unity/com.malloc.mesh-link/LICENSE).
+- Blender extension (`blender/`): GPL-3.0-or-later; see [blender/mesh_link/LICENSE](blender/mesh_link/LICENSE).

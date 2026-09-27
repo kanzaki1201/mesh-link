@@ -1,146 +1,209 @@
 # Mesh Link
 
-Mesh Link provides a one-way live mesh link into the Unity Editor.
-Nomad Sculpt sends through Nomad App Linking while Unity uses connect mode.
-Blender sends through the Mesh Link extension while Unity uses listen mode.
-Unity previews meshes with Unity materials that you assign.
-Preview objects and meshes are transient; material assignments are saved in a shared `MeshLinkMaterialMap` asset.
+Mesh Link shows your Blender or Nomad Sculpt meshes live in the Unity Editor.
+You edit in Blender or Nomad.
+Unity updates the preview while you work, with your own Unity materials and shaders.
 
-This is an unofficial project. It is not affiliated with or endorsed by Nomad Sculpt or its developer.
+This is an unofficial project.
+It is not affiliated with or endorsed by Nomad Sculpt or its developer.
+
+<!-- screenshot: Blender and Unity side by side with a live preview -->
+
+## Features
+
+- **Live mesh preview.** Vertex edits, sculpt strokes, transforms, names, and visibility reach Unity as you work.
+- **Blender and Nomad Sculpt.** Blender connects through the Mesh Link extension. Nomad connects through App Linking.
+- **Your Unity materials.** Assign any Unity material to each material slot. lilToon, MK Toon, MToon, URP Lit, and other shaders work.
+- **Saved assignments.** A Material Map asset keeps your material choices across sessions, Unity restarts, and scenes.
+- **Texture preview from Blender.** One button bakes your painted maps and shows them on the Unity materials. Layered painting add-ons such as Paint System and Ucupaint work.
+- **Vertex paint from Nomad.** Nomad vertex colors and opacity reach Unity.
+- **Non-destructive.** The preview is temporary. Mesh Link never changes your material assets.
 
 ## Requirements
 
 - Unity 6000.3 or later.
-- For Nomad: a Nomad version with App Linking.
-- For Blender: Blender 5.0 or later; tested with Blender 5.2.
-- The source and Unity run on the same machine or the same local network.
-- The configured TCP port must be reachable; Mesh Link defaults to port 48312.
+- Blender 5.0 or later (tested with Blender 5.2), or a Nomad Sculpt version with App Linking.
+- The source and Unity run on the same machine or on the same local network.
+- The TCP port must be open between them. The default port is 48312.
 
-## Install the Unity package
+## Installation
 
-In Unity Package Manager, install the package from this git URL:
+### Unity package
+
+In Unity, open **Window > Package Manager**, select **+ > Install package from git URL**, and enter:
 
 ```text
 https://github.com/kanzaki1201/mesh-link.git?path=unity/com.malloc.mesh-link
 ```
 
-For a local checkout at Packages/mesh-link, use this entry in the host project's `Packages/manifest.json`:
+### Blender extension
 
-```json
-"com.malloc.mesh-link": "file:mesh-link/unity/com.malloc.mesh-link"
-```
+1. Zip the contents of `blender/mesh_link/` (the `blender_manifest.toml` file and the Python files).
+2. In Blender, open **Edit > Preferences > Get Extensions**.
+3. Select **Install from Disk** and choose the ZIP file.
+4. Enable **Mesh Link**.
 
-Add a `MeshLinkScene` component to an empty GameObject and use its Inspector:
+## Quick start: Blender to Unity
 
-- `Host`: the Nomad device address in connect mode, or the local address Unity binds in listen mode.
-- `Port`: the TCP port, matching the source connection settings.
-- `Listen`: on for Blender; off for Nomad.
-- `Material Map`: select a shared asset or use `Create Material Map` to create one.
-- `Enable Sync` / `Disable Sync`: start or stop the session; connection fields are locked while sync is enabled.
+1. In Unity, create an empty GameObject and add the **MeshLinkScene** component.
+2. In its Inspector, turn **Listen** on.
+3. Set **Host** to `127.0.0.1` when Blender runs on the same machine. Otherwise, set it to the local network address of the Unity machine.
+4. Press **Enable Sync**.
+5. In Blender, open the 3D Viewport sidebar (**N**) and select the **Mesh Link** tab.
+6. Set **Host** and **Port** to the Unity values and press **Connect**.
+7. The first time, Unity shows **Accept** in the MeshLinkScene Inspector. Press it. Later connections skip this step.
+8. Your visible mesh objects appear in Unity. Edit them in Blender and watch Unity update.
+9. Assign Unity materials in the Inspector. See [Materials](#materials).
+10. Press **Disconnect** in Blender when you are done.
 
-The `Status` field shows connection progress and errors.
+<!-- screenshot: Blender Mesh Link sidebar beside the Unity MeshLinkScene Inspector -->
 
-<!-- screenshot: MeshLinkScene Inspector connection fields and sync button -->
+Blender sends the base mesh of every visible mesh object in the current view layer.
+Modifiers are not applied.
+Shape keys send the positions of the active key.
+Faces must be triangles or quads.
 
-## Blender
+## Quick start: Nomad Sculpt to Unity
 
-### Install the extension
+1. In Nomad, enable App Linking and note the device address and port.
+2. In Unity, create an empty GameObject and add the **MeshLinkScene** component.
+3. Leave **Listen** off.
+4. Set **Host** and **Port** to the values from Nomad.
+5. Press **Enable Sync**.
+6. Accept the pairing request in Nomad.
+7. Your Nomad meshes appear in Unity. Sculpt and watch Unity update.
+8. Press **Disable Sync** in Unity to stop.
 
-Zip `blender_manifest.toml` and the Python files inside `blender/mesh_link/` together.
-Use Blender's extension installation from disk to select the ZIP, then enable the extension.
-For development from a checkout, use the junction instructions under Source development below.
-
-### Tutorial
-
-1. In Unity, set `Host` to 127.0.0.1 for the same machine, or to the Unity computer's local network address for another machine.
-   Set `Port`, turn `Listen` on, and press `Enable Sync`.
-2. In Blender's 3D Viewport sidebar, open the `Mesh Link` tab.
-   Set `Host` to the Unity computer's address and `Port` to the Unity listener port, then press `Connect`.
-3. Select the GameObject with `MeshLinkScene` in Unity and press `Accept` in its Inspector when pairing is pending.
-   A saved pairing token allows later connections without another approval.
-4. Check that visible mesh objects from Blender's current view layer appear in Unity.
-5. Edit vertices in Blender and watch the Unity preview update.
-6. In Unity, assign a Unity material to each slot in `Synced Object Materials (N)`, where N is the object count.
-7. Hide, rename, or delete a synchronized object in Blender and check its visibility, name, or removal in Unity.
-8. Press `Disconnect` in Blender to end the link.
-
-The extension sends the base mesh, the active UV layer, and one material slot per Blender slot.
-An object with no slots sends one slot named after the object.
-Shape keys supply the active key's vertex positions.
-Transforms, names, and visibility also travel to Unity.
-Armatures, modifier results, normals, and vertex colors do not travel; Unity recalculates normals.
-Faces must be triangles or quads; n-gons stop the link.
-
-<!-- screenshot: Blender Mesh Link sidebar beside the Unity mesh preview -->
-
-## Nomad Sculpt
-
-### Setup
-
-Leave Unity's `Listen` off.
-Set `Host` to the device IP shown in Nomad and `Port` to the port shown by Nomad.
-
-### Tutorial
-
-1. Enable App Linking in Nomad.
-2. Select the GameObject with `MeshLinkScene` in Unity, check `Host` and `Port`, and press `Enable Sync`.
-3. Accept the pairing request in Nomad when prompted.
-4. Check that the Nomad meshes appear in Unity.
-5. Assign a Unity material to each object in `Synced Object Materials (N)`.
-6. Sculpt a mesh in Nomad and watch the Unity preview update.
-7. Move, hide, or delete an object in Nomad and check the corresponding Unity preview change.
-8. Press `Disable Sync` in Unity to stop and clear the preview.
-
-Each Nomad object has one Unity material slot.
-Split a Nomad object into separate objects when it needs multiple Unity materials.
-Nomad vertex colors and opacity are supported; the assigned Unity shader must use vertex colors to show the paint.
+Each Nomad object has one material slot.
+To use several Unity materials on one Nomad mesh, split it into separate objects.
+To show Nomad vertex paint, use a Unity shader that reads vertex colors.
 
 ## Materials
 
-The `MeshLinkScene` Inspector shows `Synced Object Materials (N)` with one row per object and slot.
-Each row shows the object and slot names, a short mesh ID, and a Unity material field.
-Assign, replace, or clear a material in that field.
-Objects that share geometry keep independent material assignments.
+The MeshLinkScene Inspector lists **Synced Object Materials**.
+Each row is one object and one material slot.
+Drop a Unity material into a row to assign it.
 
-Assignments in a Material Map asset survive a stop, a reconnect, and a Unity restart, and scenes can share the asset.
-A stored assignment is reapplied when an object with the same mesh ID and slot appears, or, failing that, the same object and slot names.
-Assignments record Undo and save the Material Map asset; assigning the asset to a scene component dirties that scene.
-Without a Material Map, assignments affect only the current preview.
-`Stored Materials (N)` shows the map entry count, and `Clear Stored Materials` empties the map.
-MToon materials can show close-range bloom on synchronized meshes.
+<!-- screenshot: Synced Object Materials rows with assigned materials -->
 
-<!-- screenshot: Synced Object Materials with separate object and slot assignments -->
+To keep your assignments, give the scene a **Material Map** asset:
+
+1. In the MeshLinkScene Inspector, press **Create Material Map**, or select an existing map in the **Material Map** field.
+2. Assign materials as usual.
+
+The map saves each assignment.
+When an object appears again, Mesh Link applies its saved material.
+Several scenes can share one map.
+**Clear Stored Materials** empties the map for every scene that uses it.
+Without a map, assignments last only until sync stops.
+
+## Texture preview (Blender)
+
+Texture preview shows your painted maps from Blender on the Unity materials.
+It works with plain image textures, baked maps, and layered painting add-ons such as Paint System and Ucupaint.
+
+### How to use it
+
+1. Connect Blender to Unity as in the quick start.
+2. In Unity, assign materials to the slots.
+3. Paint in Blender.
+4. In the Mesh Link sidebar, press **Bake & Send Textures**.
+5. Unity shows the baked maps on the preview.
+
+Press the button again after more painting.
+
+Mesh Link bakes each material slot of each visible object with Cycles, on the active UV map.
+Blender waits until the bake ends.
+Set the bake size in the extension preferences with **Texture Size** (512 to 4096, default 1024).
+Hidden objects and objects that do not render are skipped.
+
+### What is sent
+
+Mesh Link reads the inputs of the Principled BSDF that feeds the Material Output.
+
+| Blender input | Channel | Unity property by default |
+|---|---|---|
+| Base Color | `color` | The shader's main texture, else `_MainTex`, else `_BaseMap` |
+| Emission Color | `emissive` | `_EmissionMap` |
+| Normal | `normal` | `_BumpMap`, else `_NormalMap` |
+| Metallic | `metalness` | `_MetallicMap`, else `_MetallicGlossMap` |
+| Roughness | `roughness` | `_RoughnessMap`, else `_SmoothnessTex` with invert |
+
+An input that has no link sends nothing.
+Emission strength is not sent.
+In Unity, each channel appears under its material row.
+Select a shader property from the channel's drop-down list to show the map.
+The list needs a Material Map.
+Select `(unbound)` to turn the channel off for that material, and select a property again to turn it back on.
+Only linear channel rows (`normal`, `metalness`, `roughness`, and `x_*`) show the **Invert** toggle.
+The toggle needs a Material Map.
+Invert reverses the map's RGB values and keeps its alpha value.
+For `roughness`, invert is on by default when the shader has `_SmoothnessTex` and no `_RoughnessMap`, as with lilToon.
+
+### Extra maps, such as toon masks
+
+Toon shaders use extra maps, for example shadow or rim masks.
+Send them with a **Mesh Link Channel** node:
+
+1. In the Shader Editor, add **Shift+A > Mesh Link > Mesh Link Channel**.
+2. Connect your mask to its **Color** input.
+3. Type `Shadow Mask` as the name on the node.
+4. Press **Bake & Send Textures**.
+
+The `Shadow Mask` node sends `x_shadow_mask`.
+Mesh Link trims and lowercases the node name, and replaces spaces and hyphens with `_`.
+After conversion, the name can contain only `a-z`, `0-9`, and `_`.
+A duplicate name on one material stops the bake with an error.
+
+### Shader settings
+
+Mesh Link cannot turn on shader features.
+Turn on the feature on the material before you preview a map for it.
+
+| Shader | Base color | Normal | Emission |
+|---|---|---|---|
+| lilToon | Always shown | Turn on **Normal Map** (`_UseBumpMap`) | Turn on **Emission** (`_UseEmission`) |
+| MK Toon | Assign any placeholder albedo map | Assign any placeholder normal map | Assign any placeholder emission map |
+| URP Lit | Always shown | Assign any placeholder **Normal Map** | Turn on **Emission** and set its color to white |
+
+MK Toon and URP Lit enable a map only when their Inspector receives a texture, so a placeholder texture is necessary.
+The URP Lit emission color multiplies the map, and its default is black.
+URP Lit packs smoothness into the alpha of `_MetallicGlossMap`.
+Mesh Link does not fill that alpha.
+
+Preview textures are temporary.
+Mesh Link removes them when sync stops.
+Your material assets do not change.
 
 ## Troubleshooting
 
-- Pairing is pending with no prompt: for Blender, select the owning `MeshLinkScene` GameObject and use `Accept` in Unity's Inspector; for Nomad, approve in Nomad.
-- A second client is refused: the Unity listener accepts one client at a time; use `Disconnect` on the first Blender client before connecting another.
-- Connection fails: check `Host`, matching `Port` values, and the firewall's TCP access to that port; 127.0.0.1 works only on the same machine.
-- Nothing updates: check `Enable Sync` and the session configuration: `live_sync=true`, `sync_objects=true`, and `active_source=client` for Blender or `active_source=nomad` for Nomad.
-- A mesh looks flipped: conversion is automatic: Nomad (x, y, z) becomes Unity (x, y, -z); Blender (x, y, z) becomes Unity (x, z, y), with triangle winding reversed by Unity.
-- An n-gon error names the object: convert its faces to triangles or quads in Blender, then reconnect.
+- **Pairing waits and nothing happens.** For Blender, select the MeshLinkScene GameObject in Unity and press **Accept**. For Nomad, accept the request in Nomad.
+- **The connection fails.** Check **Host** and **Port** on both sides. Check that the firewall allows TCP on that port. The address `127.0.0.1` works only on the same machine.
+- **A second Blender instance cannot connect.** Unity accepts one Blender client at a time. Disconnect the first one.
+- **Blender reports an n-gon.** Convert the faces of that object to triangles or quads, then connect again.
+- **Bake & Send Textures is grayed out.** Connect to Unity first.
+- **A texture does not show.** Turn on the matching feature on the material. See [Shader settings](#shader-settings). For an `x_` channel, select a property in the drop-down list.
+- **MToon looks too bright up close.** This is a known issue with MToon on preview meshes.
 
 ## Limits
 
-- Unity Editor preview only; one scene owns the global session and one client can use the listener.
-- Synchronization is one-way; Unity edits do not return to the source.
-- Preview objects and meshes are not saved; stopping sync, losing the connection, closing the scene, reloading scripts, or changing Play Mode clears them.
-- No automatic discovery or reconnection.
-- No hierarchy, groups, cameras, lights, armatures, or evaluated Blender modifiers.
-- No source material assets, textures, or shading transfer; assign materials in Unity.
-- Nomad has one material slot per object; Blender vertex colors and n-gons are unsupported.
-- Nomad roughness, metalness, masks, density, and base or layer paint channels are ignored.
-- Sheared transforms are rejected for the affected object, which keeps its last valid state.
-- A Blender object above 2,000,000 vertices stops the link.
-- The Blender send queue holds 64 MiB; overflow replaces queued deltas with full updates for affected objects.
-- Unity limits JSON payloads to 50 MiB, binary payloads to 512 MiB, and queued frame data to 512 MiB.
-- Unsupported delta formats and malformed paint updates are skipped; other malformed supported data can stop the session.
-- No file export/import workflow, file watcher, or daemon.
+- Mesh Link works in the Unity Editor only, not in a built player.
+- Changes go one way, from the source to Unity.
+- The preview is not saved. Stopping sync, a lost connection, closing the scene, reloading scripts, or entering Play Mode clears it.
+- Mesh Link does not find sources automatically and does not reconnect by itself.
+- Mesh Link does not send hierarchy, cameras, lights, armatures, or modifier results.
+- Mesh Link does not send material values such as colors and numbers; only linked inputs bake.
+- Nomad textures are not sent. Nomad roughness, metalness, and paint layers are ignored.
+- Blender vertex colors are not sent.
+- A Blender object with more than 2,000,000 vertices stops the link.
+- An object with a sheared transform keeps its last valid state.
 
-## Source development
+## Development
 
-Close Blender and link the package folder into your local Blender extension repository.
-On Windows, run this from the source repository:
+### Blender extension from source
+
+Link the extension folder into the Blender extension repository.
+On Windows, close Blender and run this from the repository root:
 
 ```powershell
 $source = (Resolve-Path .\blender\mesh_link).Path
@@ -149,17 +212,36 @@ New-Item -ItemType Directory -Path $repository -Force | Out-Null
 New-Item -ItemType Junction -Path (Join-Path $repository 'mesh_link') -Target $source
 ```
 
-Use your Blender version's folder and uninstall any existing copy before creating the junction.
-Refresh local extensions in Preferences, enable the extension, and restart Blender after source changes.
+Use the folder of your Blender version.
+Remove any installed copy of the extension first.
+Then refresh local extensions in Preferences and enable Mesh Link.
+Restart Blender after source changes.
 
-Run the Python tests from the repository root with Python, NumPy, and pytest installed:
+### Unity package from source
+
+Put the repository in `Packages/mesh-link` of a Unity project and add this entry to `Packages/manifest.json`:
+
+```json
+"com.malloc.mesh-link": "file:mesh-link/unity/com.malloc.mesh-link"
+```
+
+### Tests
+
+Python tests need Python, NumPy, and pytest.
+Run them from the repository root:
 
 ```powershell
 python -m pytest blender/tests
 ```
 
-For Unity tests, include `com.malloc.mesh-link` in the host manifest's `testables` array.
-With Unity CLI installed, run this from the repository root for the local checkout layout above:
+The Blender bake check runs in Blender:
+
+```powershell
+blender --background --factory-startup --python blender/tests/blender_bake_smoke.py
+```
+
+For Unity tests, add `com.malloc.mesh-link` to the `testables` array of the host manifest.
+With the Unity CLI, run this from the repository root in the local checkout layout:
 
 ```powershell
 unity test ../.. --mode EditMode --filter Malloc.MeshLink --output mesh-link-test-results.xml
@@ -167,10 +249,12 @@ unity test ../.. --mode EditMode --filter Malloc.MeshLink --output mesh-link-tes
 
 ## Credits
 
-[Nomad Link](https://github.com/stephomi/nomad-link), by stephomi, is MIT-licensed and defines the App Linking protocol Mesh Link speaks.
-The Blender extension is original code and is not derived from the Nomad Link Blender add-on.
+[Nomad Link](https://github.com/stephomi/nomad-link), by stephomi, defines the App Linking protocol that Mesh Link uses.
+Nomad Link is MIT-licensed.
+The Mesh Link Blender extension is original code.
+It is not derived from the Nomad Link Blender add-on.
 
 ## License
 
-- Unity package (`unity/`): MIT; see [unity/com.malloc.mesh-link/LICENSE](unity/com.malloc.mesh-link/LICENSE).
-- Blender extension (`blender/`): GPL-3.0-or-later; see [blender/mesh_link/LICENSE](blender/mesh_link/LICENSE).
+- Unity package (`unity/`): MIT. See [unity/com.malloc.mesh-link/LICENSE](unity/com.malloc.mesh-link/LICENSE).
+- Blender extension (`blender/`): GPL-3.0-or-later. See [blender/mesh_link/LICENSE](blender/mesh_link/LICENSE).

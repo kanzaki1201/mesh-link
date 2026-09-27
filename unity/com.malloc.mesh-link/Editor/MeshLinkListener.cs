@@ -27,7 +27,9 @@ namespace Malloc.MeshLink
             "session_config",
             "mesh_instance",
             "mesh_delta_receive",
-            "mesh_attributes_receive"
+            "mesh_attributes_receive",
+            "material",
+            "texture"
         };
 
         private readonly MeshLinkSession session;
@@ -141,6 +143,15 @@ namespace Malloc.MeshLink
                 type = "error",
                 message = message,
                 request_id = requestId
+            });
+        }
+
+        internal void RequestTexture(string textureId)
+        {
+            Send(new RequestTextureDto
+            {
+                type = "request_texture",
+                texture_id = textureId
             });
         }
 
@@ -324,6 +335,7 @@ namespace Malloc.MeshLink
                 clientName,
                 configuration.live_sync,
                 configuration.sync_objects,
+                configuration.sync_materials,
                 configuration.active_source);
         }
 
@@ -577,7 +589,14 @@ namespace Malloc.MeshLink
         {
             return type == "mesh_full" || type == "mesh_delta" ||
                 type == "mesh_attributes" || type == "mesh_instance" ||
-                type == "object_state" || type == "object_delete";
+                type == "object_state" || type == "object_delete" ||
+                type == "material" || type == "texture";
+        }
+
+        [Serializable]
+        private sealed class RequestTextureDto : TypeDto
+        {
+            public string texture_id;
         }
 
         private sealed class ListenerItem

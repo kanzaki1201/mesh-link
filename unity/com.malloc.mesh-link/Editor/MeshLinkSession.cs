@@ -49,6 +49,7 @@ namespace Malloc.MeshLink
             new Dictionary<string, ObjectEntry>(StringComparer.Ordinal);
         private readonly Dictionary<string, GeometryEntry> geometries =
             new Dictionary<string, GeometryEntry>(StringComparer.Ordinal);
+        private readonly MeshLinkTextures textures;
 
         private MeshLinkScene owner;
         private TcpClient client;
@@ -67,6 +68,7 @@ namespace Malloc.MeshLink
         private bool configurationEstablished;
         private bool liveSync;
         private bool syncObjects;
+        private bool syncMaterials;
         private string activeSource = "none";
         private string host;
         private int port;
@@ -81,6 +83,10 @@ namespace Malloc.MeshLink
 
         private MeshLinkSession()
         {
+            textures = new MeshLinkTextures(
+                textureId => listener?.RequestTexture(textureId),
+                SetStatus,
+                NotifyInspector);
         }
 
         internal void Enable(
@@ -219,8 +225,28 @@ namespace Malloc.MeshLink
             }
             materials[slot] = material;
             entry.Renderer.sharedMaterials = materials;
+            textures.Reapply(meshId, entry.Renderer, scene.MaterialMap);
             NotifyInspector();
             return true;
+        }
+
+        internal string[] GetTextureChannels(string meshId, int slot)
+        {
+            return textures.GetChannels(meshId, slot);
+        }
+
+        internal (string Property, bool Invert) ResolveTextureProperty(Material material, string channel,
+            MeshLinkMaterialMap map)
+        {
+            return textures.ResolveProperty(material, channel, map);
+        }
+
+        internal bool SetTextureBinding(MeshLinkScene scene, string meshId, int slot,
+            string channel, string property, bool invert = false, bool updateProperty = true)
+        {
+            return running && owner == scene &&
+                textures.SetBinding(meshId, slot, channel, property, invert, updateProperty,
+                    FindRenderer, scene.MaterialMap);
         }
 
         private void StoreMaterial(MeshLinkMaterialMap map, ObjectEntry entry, Material material, int slot)
@@ -266,6 +292,7 @@ namespace Malloc.MeshLink
                 materials[slot] = stored?.material != null ? stored.material : null;
             }
             entry.Renderer.sharedMaterials = materials;
+            textures.Reapply(entry.MeshId, entry.Renderer, map);
         }
 
         private void RenameStoredMaterials(ObjectEntry entry)
@@ -341,6 +368,8 @@ namespace Malloc.MeshLink
         }
 
         internal int ObjectCount => objects.Count;
+        internal int TextureBlobCount => textures.BlobCount;
+        internal int DecodedTextureCount => textures.DecodedCount;
         internal bool IsRunning => running;
         internal string Status => status;
         internal string Error => error;
@@ -367,12 +396,14 @@ namespace Malloc.MeshLink
             string clientName,
             bool nextLiveSync,
             bool nextSyncObjects,
+            bool nextSyncMaterials,
             string nextActiveSource)
         {
             helloReceived = true;
             configurationEstablished = true;
             liveSync = nextLiveSync;
             syncObjects = nextSyncObjects;
+            syncMaterials = nextSyncMaterials;
             activeSource = nextActiveSource;
             SetStatus($"Connected: {clientName}");
         }
@@ -494,7 +525,10 @@ namespace Malloc.MeshLink
             {
                 var json = StrictUtf8.GetString(frame.Json);
                 var header = ParseBaseHeader(json, frame.Binary.Length);
-                DispatchFrame(json, frame.Binary, header);
+                if (listenMode && (header.type == "material" || header.type == "texture"))
+                    ProcessTextureFrame(json, frame.Binary, header.type);
+                else
+                    DispatchFrame(json, frame.Binary, header);
             }
             catch (Exception exception)
             {
@@ -519,6 +553,19 @@ namespace Malloc.MeshLink
 
             ValidateBinarySize(json, binarySize);
             return header;
+        }
+
+        private void ProcessTextureFrame(string json, byte[] binary, string type)
+        {
+            if (type == "texture")
+            {
+                textures.ApplyBlob(json, binary, FindRenderer, owner.MaterialMap);
+                return;
+            }
+            RequireJsonOnly(binary);
+            if (CanApplyLiveFrame(json) &&
+                (!JsonUtility.FromJson<LiveDto>(json).live_sync || syncMaterials))
+                textures.ApplyMaterial(json, FindRenderer, owner.MaterialMap);
         }
 
         private void DispatchFrame(string json, byte[] binary, BaseDto header)
@@ -667,6 +714,7 @@ namespace Malloc.MeshLink
         {
             liveSync = config.live_sync;
             syncObjects = config.sync_objects;
+            syncMaterials = config.sync_materials;
             activeSource = config.active_source;
         }
 
@@ -1099,6 +1147,7 @@ namespace Malloc.MeshLink
             }
 
             objects.Remove(meshId);
+            textures.RemoveObject(meshId);
             ReleaseGeometry(entry.GeometryId);
             UnityEngine.Object.DestroyImmediate(entry.GameObject);
             NotifyInspector();
@@ -2030,6 +2079,7 @@ namespace Malloc.MeshLink
             AssemblyReloadEvents.beforeAssemblyReload += OnAssemblyReload;
             EditorApplication.quitting += OnEditorQuit;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            Undo.undoRedoPerformed += OnUndoRedo;
             callbacksSubscribed = true;
         }
 
@@ -2044,7 +2094,13 @@ namespace Malloc.MeshLink
             AssemblyReloadEvents.beforeAssemblyReload -= OnAssemblyReload;
             EditorApplication.quitting -= OnEditorQuit;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            Undo.undoRedoPerformed -= OnUndoRedo;
             callbacksSubscribed = false;
+        }
+
+        private void OnUndoRedo()
+        {
+            textures.ReapplyAll(FindRenderer, owner.MaterialMap);
         }
 
         private void OnAssemblyReload()
@@ -2087,6 +2143,7 @@ namespace Malloc.MeshLink
             client = null;
             UnsubscribeCallbacks();
             DestroyPreview();
+            textures.Clear();
             ClearQueues();
             ResetProtocolState();
             running = false;
@@ -2151,6 +2208,7 @@ namespace Malloc.MeshLink
             configurationEstablished = false;
             liveSync = false;
             syncObjects = false;
+            syncMaterials = false;
             activeSource = "none";
             failureMessage = string.Empty;
         }

@@ -269,7 +269,7 @@ namespace Malloc.MeshLink.Tests
                 var id = TextureId(png);
                 blender.Send(TextureJson(id, png), png);
                 WaitUntil(() => session.TextureBlobCount == 1);
-                blender.Send(MaterialJson("\"roughness\":{},\"x_Bad\":{}", false));
+                blender.Send(MaterialJson("\"occlusion\":{},\"x_Bad\":{}", false));
                 PumpFor(0.1);
                 Assert.That(session.GetTextureChannels("mesh-a", 0), Is.Empty);
                 blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + id + "\"}", false));
@@ -316,7 +316,7 @@ namespace Malloc.MeshLink.Tests
                 var id = TextureId(png);
                 blender.Send(TextureJson(id, png), png);
                 WaitUntil(() => session.TextureBlobCount == 1);
-                blender.Send(MaterialJson("\"roughness\":{\"texture_id\":5}," +
+                blender.Send(MaterialJson("\"occlusion\":{\"texture_id\":5}," +
                     "\"color\":{\"texture_id\":\"" + id + "\"}"));
                 WaitUntil(() => BlockTexture(0, "_MainTex") != null);
                 Assert.That(session.GetTextureChannels("mesh-a", 0), Is.EqualTo(new[] { "color" }));

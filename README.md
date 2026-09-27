@@ -251,11 +251,8 @@ unity test C:/path/to/UnityProject --mode EditMode --filter Malloc.MeshLink --ou
 ```
 
 ## Credits
+[Nomad Link](https://github.com/stephomi/nomad-link), by stephomi
 
-[Nomad Link](https://github.com/stephomi/nomad-link), by stephomi, defines the App Linking protocol that Mesh Link uses.
-Nomad Link is MIT-licensed.
-The Mesh Link Blender extension is original code.
-It is not derived from the Nomad Link Blender add-on.
 
 ## License
 

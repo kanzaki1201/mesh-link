@@ -155,8 +155,10 @@ Turn on the feature on the material before you preview a map for it.
 |---|---|---|---|
 | lilToon | Always shown | Turn on **Normal Map** (`_UseBumpMap`) | Turn on **Emission** (`_UseEmission`) |
 | MK Toon | Assign any placeholder albedo map | Assign any placeholder normal map | Assign any placeholder emission map |
+| URP Lit | Always shown | Assign any placeholder **Normal Map** | Turn on **Emission** and set its color to white |
 
-MK Toon enables a map only when its Inspector receives a texture, so a placeholder texture is necessary.
+MK Toon and URP Lit enable a map only when their Inspector receives a texture, so a placeholder texture is necessary.
+The URP Lit emission color multiplies the map, and its default is black.
 
 Preview textures are temporary.
 Mesh Link removes them when sync stops.

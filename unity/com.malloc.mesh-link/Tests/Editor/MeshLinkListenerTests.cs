@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using NUnit.Framework;
@@ -20,6 +21,11 @@ namespace Malloc.MeshLink.Tests
         private GameObject ownerObject;
         private MeshLinkScene owner;
         private int port;
+        private MeshLinkMaterialMap textureMap;
+        private Material textureMaterialA;
+        private Material textureMaterialB;
+        private Material textureMaterialC;
+        private Texture2D baseTexture;
 
         [SetUp]
         public void SetUp()
@@ -38,6 +44,11 @@ namespace Malloc.MeshLink.Tests
         public void TearDown()
         {
             session.StopForTests();
+            if (textureMaterialA != null) UnityEngine.Object.DestroyImmediate(textureMaterialA);
+            if (textureMaterialB != null) UnityEngine.Object.DestroyImmediate(textureMaterialB);
+            if (textureMaterialC != null) UnityEngine.Object.DestroyImmediate(textureMaterialC);
+            if (baseTexture != null) UnityEngine.Object.DestroyImmediate(baseTexture);
+            if (textureMap != null) UnityEngine.Object.DestroyImmediate(textureMap);
             EditorPrefs.DeleteKey(MeshLinkSession.PairTokenKey("127.0.0.1", port));
             if (ownerObject != null)
             {
@@ -202,6 +213,248 @@ namespace Malloc.MeshLink.Tests
             }
         }
 
+        [Test]
+        public void TextureBlobCacheDropsOnlyDereferencedIdsAndStopDestroysDecodes()
+        {
+            StartPairedTexturePreview(out var blender);
+            using (blender)
+            {
+                baseTexture = new Texture2D(2, 2);
+                textureMaterialA.SetTexture("_MainTex", baseTexture);
+                var png = Png(Color.red);
+                var id = TextureId(png);
+                var unused = Png(Color.blue);
+                var unusedId = TextureId(unused);
+                blender.Send(TextureJson(id, png), png);
+                blender.Send(TextureJson(id, png), png);
+                blender.Send(TextureJson(unusedId, unused), unused);
+                WaitUntil(() => session.TextureBlobCount == 2);
+
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + id + "\"}"));
+                WaitUntil(() => session.DecodedTextureCount == 1);
+                var texture = BlockTexture(0, "_MainTex");
+                Assert.That(texture, Is.Not.Null);
+                Assert.That(texture.mipmapCount, Is.GreaterThan(1));
+                Assert.That(texture.hideFlags, Is.EqualTo(HideFlags.DontSave));
+                Assert.That(texture.wrapMode, Is.EqualTo(TextureWrapMode.Repeat));
+                Assert.That(texture.filterMode, Is.EqualTo(FilterMode.Bilinear));
+
+                blender.Send(MaterialJson("\"color\":{}"));
+                WaitUntil(() => session.TextureBlobCount == 1);
+                Assert.That(BlockTexture(0, "_MainTex"),
+                    Is.SameAs(textureMaterialA.GetTexture("_MainTex")));
+                Assert.That(session.DecodedTextureCount, Is.Zero);
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + unusedId + "\"}"));
+                WaitUntil(() => session.DecodedTextureCount == 1);
+                texture = BlockTexture(0, "_MainTex");
+                session.StopForTests();
+                Assert.That(texture == null, Is.True);
+                Assert.That(session.TextureBlobCount, Is.Zero);
+                Assert.That(session.DecodedTextureCount, Is.Zero);
+                Assert.That(session.GetTextureChannels("mesh-a", 0), Is.Empty);
+            }
+        }
+
+        [Test]
+        public void MaterialChannelsKeepClearRequestAndUseSlotZeroByDefault()
+        {
+            StartPairedTexturePreview(out var blender, true);
+            using (blender)
+            {
+                var png = Png(Color.green);
+                var id = TextureId(png);
+                blender.Send(TextureJson(id, png), png);
+                WaitUntil(() => session.TextureBlobCount == 1);
+                blender.Send(MaterialJson("\"roughness\":{},\"x_Bad\":{}", false));
+                PumpFor(0.1);
+                Assert.That(session.GetTextureChannels("mesh-a", 0), Is.Empty);
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + id + "\"}", false));
+                WaitUntil(() => BlockTexture(0, "_MainTex") != null);
+                Assert.That(BlockTexture(1, "_MainTex"), Is.Null);
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + id + "\"}", true, 1));
+                WaitUntil(() => session.GetTextureChannels("mesh-a", 1).Length == 1);
+                Assert.That(BlockTexture(1, "_MainTex"), Is.Null);
+                session.SetMaterial(owner, "mesh-a", textureMaterialA, 1);
+                Assert.That(BlockTexture(1, "_MainTex"), Is.SameAs(BlockTexture(0, "_MainTex")));
+
+                blender.Send(MaterialJson("\"normal\":{}", false));
+                WaitUntil(() => session.GetTextureChannels("mesh-a", 0).Length == 2);
+                Assert.That(BlockTexture(0, "_MainTex"), Is.Not.Null);
+
+                var yellow = Png(Color.yellow);
+                var missing = TextureId(yellow);
+                var previous = BlockTexture(0, "_MainTex");
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + missing + "\"}", false));
+                Assert.That(blender.ReceiveJson(session),
+                    Does.Contain("\"type\":\"request_texture\"").And.Contain(missing));
+                Assert.That(BlockTexture(0, "_MainTex"), Is.Not.Null);
+                blender.Send(TextureJson(missing, yellow), yellow);
+                WaitUntil(() => BlockTexture(0, "_MainTex") != previous);
+
+                blender.Send(MaterialJson("\"color\":{}", false));
+                WaitUntil(() => BlockTexture(0, "_MainTex") ==
+                    textureMaterialA.GetTexture("_MainTex"));
+
+                blender.Send(MaterialJson("\"color\":{}", true, 2));
+                WaitUntil(() => session.Status.Contains("slot_index is out of range"));
+                blender.Send(MaterialJson("\"color\":{}", true, 1, "unknown"));
+                WaitUntil(() => session.Status.Contains("unknown mesh_id"));
+                Assert.That(BlockTexture(0, "_MainTex"),
+                    Is.SameAs(textureMaterialA.GetTexture("_MainTex")));
+            }
+        }
+
+        [Test]
+        public void TextureBindingsUseColorSpaceAndReapplyAfterMaterialChange()
+        {
+            StartPairedTexturePreview(out var blender, true);
+            using (blender)
+            {
+                var shader = Shader.Find("Standard");
+                Assert.That(shader, Is.Not.Null);
+                textureMaterialB = new Material(shader);
+                textureMap = ScriptableObject.CreateInstance<MeshLinkMaterialMap>();
+                owner.MaterialMap = textureMap;
+                session.SetMaterial(owner, "mesh-a", textureMaterialB, 1);
+                var png = Png(Color.magenta);
+                var id = TextureId(png);
+                blender.Send(TextureJson(id, png), png);
+                WaitUntil(() => session.TextureBlobCount == 1);
+                var channels = "\"color\":{\"texture_id\":\"" + id + "\"}," +
+                    "\"emissive\":{\"texture_id\":\"" + id + "\"}," +
+                    "\"normal\":{\"texture_id\":\"" + id + "\"}," +
+                    "\"x_mask\":{\"texture_id\":\"" + id + "\"}";
+                blender.Send(MaterialJson(channels, true, 1));
+                WaitUntil(() => session.DecodedTextureCount == 2);
+                var color = BlockTexture(1, "_MainTex");
+                var emissive = BlockTexture(1, "_EmissionMap");
+                var normal = BlockTexture(1, "_BumpMap");
+                var original = textureMaterialB.GetTexture("_MainTex");
+                Assert.That(color, Is.SameAs(emissive));
+                Assert.That(normal, Is.Not.SameAs(color));
+                Assert.That(color.isDataSRGB, Is.True);
+                Assert.That(normal.isDataSRGB, Is.False);
+                Assert.That(BlockTexture(0, "_MainTex"), Is.Null);
+                Assert.That(textureMaterialB.GetTexture("_MainTex"), Is.SameAs(original));
+                Assert.That(session.ResolveTextureProperty(textureMaterialB, "x_mask", textureMap), Is.Null);
+
+                Assert.That(session.SetTextureBinding(owner, "mesh-a", 1, "x_mask", "_DetailMask"), Is.True);
+                Assert.That(textureMap.TextureBindings.Single().property, Is.EqualTo("_DetailMask"));
+                Assert.That(new SerializedObject(textureMap).FindProperty("textureBindings").arraySize,
+                    Is.EqualTo(1));
+                Assert.That(BlockTexture(1, "_DetailMask"), Is.SameAs(normal));
+                textureMaterialC = new Material(shader);
+                var nextOriginal = textureMaterialC.GetTexture("_MainTex");
+                session.SetMaterial(owner, "mesh-a", textureMaterialC, 1);
+                Assert.That(BlockTexture(1, "_MainTex"), Is.SameAs(color));
+                Assert.That(BlockTexture(1, "_DetailMask"), Is.Null);
+                Assert.That(textureMaterialC.GetTexture("_MainTex"), Is.SameAs(nextOriginal));
+            }
+        }
+
+        [Test]
+        public void BadTextureDecodeKeepsListenerConnectedAndLiveMaterialNeedsFlag()
+        {
+            StartPairedTexturePreview(out var blender);
+            using (blender)
+            {
+                var png = Png(Color.cyan);
+                var id = TextureId(png);
+                blender.Send(TextureJson(id, png), png);
+                WaitUntil(() => session.TextureBlobCount == 1);
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + id + "\"}", false, 0,
+                    "mesh-a", true));
+                PumpFor(0.2);
+                Assert.That(BlockTexture(0, "_MainTex"), Is.Null);
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + id + "\"}"));
+                WaitUntil(() => BlockTexture(0, "_MainTex") != null);
+                var current = BlockTexture(0, "_MainTex");
+
+                var invalid = new byte[] { 1, 2, 3, 4 };
+                var invalidId = TextureId(invalid);
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + invalidId + "\"}"));
+                Assert.That(blender.ReceiveJson(session), Does.Contain(invalidId));
+                blender.Send(TextureJson(invalidId, invalid), invalid);
+                WaitUntil(() => session.Status.Contains("PNG decode failed"));
+                Assert.That(session.IsRunning, Is.True);
+                Assert.That(BlockTexture(0, "_MainTex"), Is.SameAs(current));
+                blender.Send(SetConfigJson(1, true, true, false));
+                Assert.That(ReadConfig(blender).sync_materials, Is.True);
+                var nextPng = Png(Color.blue);
+                var nextId = TextureId(nextPng);
+                blender.Send(TextureJson(nextId, nextPng), nextPng);
+                WaitUntil(() => session.TextureBlobCount == 2);
+                blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + nextId + "\"}",
+                    true, 0, "mesh-a", true));
+                WaitUntil(() => BlockTexture(0, "_MainTex") != current);
+            }
+        }
+
+        private void StartPairedTexturePreview(out FakeBlender blender, bool twoSlots = false)
+        {
+            EditorPrefs.SetString(MeshLinkSession.PairTokenKey("127.0.0.1", port), "known-token");
+            StartListening();
+            blender = new FakeBlender(port);
+            blender.Send(HelloJson("known-token"));
+            AssertHello(JsonUtility.FromJson<HelloProbe>(blender.ReceiveJson(session)));
+            AssertInitialConfig(ReadConfig(blender));
+            var shader = Shader.Find("Unlit/Texture");
+            Assert.That(shader, Is.Not.Null);
+            textureMaterialA = new Material(shader);
+            if (twoSlots)
+            {
+                var bytes = new byte[56];
+                MeshBinary(1f).CopyTo(bytes, 0);
+                BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(52, 4), 1);
+                var json = MeshFullJson("mesh-a", "geometry-a")
+                    .Replace("\"binary_size\":52", "\"binary_size\":56").TrimEnd('}') +
+                    ",\"material_names\":[\"Body\",\"Detail\"],\"face_material_offset\":52}";
+                blender.Send(json, bytes);
+            }
+            else blender.Send(MeshFullJson("mesh-a", "geometry-a"), MeshBinary(1f));
+            WaitUntil(() => session.ObjectCount == 1);
+            session.SetMaterial(owner, "mesh-a", textureMaterialA);
+        }
+
+        private Texture2D BlockTexture(int slot, string property)
+        {
+            var block = new MaterialPropertyBlock();
+            session.FindRenderer("mesh-a").GetPropertyBlock(block, slot);
+            return block.GetTexture(property) as Texture2D;
+        }
+
+        private static string MaterialJson(string channels, bool includeSlot = true,
+            int slot = 0, string meshId = "mesh-a", bool live = false)
+        {
+            return "{\"type\":\"material\",\"mesh_id\":\"" + meshId +
+                "\",\"live_sync\":" + (live ? "true" : "false") +
+                (includeSlot ? ",\"slot_index\":" + slot : string.Empty) +
+                ",\"material\":{\"textures\":{" + channels + "}}}";
+        }
+
+        private static string TextureJson(string id, byte[] bytes)
+        {
+            return "{\"type\":\"texture\",\"texture_id\":\"" + id +
+                "\",\"name\":\"preview.png\",\"binary_size\":" + bytes.Length + "}";
+        }
+
+        private static string TextureId(byte[] bytes)
+        {
+            using (var sha = SHA256.Create())
+                return BitConverter.ToString(sha.ComputeHash(bytes))
+                    .Replace("-", string.Empty).ToLowerInvariant();
+        }
+
+        private static byte[] Png(Color color)
+        {
+            var texture = new Texture2D(2, 2);
+            texture.SetPixels(new[] { color, color, color, color });
+            texture.Apply();
+            var bytes = ImageConversion.EncodeToPNG(texture);
+            UnityEngine.Object.DestroyImmediate(texture);
+            return bytes;
+        }
+
         private void StartListening()
         {
             session.Enable(owner, "127.0.0.1", port, true);
@@ -221,7 +474,9 @@ namespace Malloc.MeshLink.Tests
                 "session_config",
                 "mesh_instance",
                 "mesh_delta_receive",
-                "mesh_attributes_receive"
+                "mesh_attributes_receive",
+                "material",
+                "texture"
             }));
         }
 

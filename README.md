@@ -111,6 +111,24 @@ MToon materials can show close-range bloom on synchronized meshes.
 
 <!-- screenshot: Synced Object Materials with separate object and slot assignments -->
 
+## Texture preview
+
+In Blender, press **Bake & Send Textures** to preview baked maps in Unity listen mode.
+Mesh Link receives `color` (sRGB), `emissive` (sRGB), `normal` (linear), and `x_<name>` (linear) channels.
+By default, `color` uses the shader's MainTexture property, then `_MainTex`, then `_BaseMap`; `emissive` uses `_EmissionMap`; and `normal` uses `_BumpMap`, then `_NormalMap`.
+An `x_` channel needs a property binding.
+Set bindings in the material rows; they are saved in the Material Map asset.
+Preview textures are transient.
+A property block cannot enable a shader feature, so enable the feature on the material first.
+
+| Shader | Base color | Normal | Emission |
+|---|---|---|---|
+| lilToon 2.3.4 | `_MainTex`, always on | `_BumpMap`, needs `_UseBumpMap` | `_EmissionMap`, needs `_UseEmission` |
+| MK Toon (Warudo SDK 0.12.0) | `_AlbedoMap`, needs `_MK_ALBEDO_MAP` | `_NormalMap`, needs `_MK_NORMAL_MAP` | `_EmissionMap`, needs `_MK_EMISSION_MAP` |
+
+MK Toon sets these keywords when its Inspector receives a map.
+A placeholder map on the material enables the preview.
+
 ## Troubleshooting
 
 - Pairing is pending with no prompt: for Blender, select the owning `MeshLinkScene` GameObject and use `Accept` in Unity's Inspector; for Nomad, approve in Nomad.
@@ -127,7 +145,7 @@ MToon materials can show close-range bloom on synchronized meshes.
 - Preview objects and meshes are not saved; stopping sync, losing the connection, closing the scene, reloading scripts, or changing Play Mode clears them.
 - No automatic discovery or reconnection.
 - No hierarchy, groups, cameras, lights, armatures, or evaluated Blender modifiers.
-- No source material assets, textures, or shading transfer; assign materials in Unity.
+- Source material assets and shading settings are not transferred; assign materials in Unity.
 - Nomad has one material slot per object; Blender vertex colors and n-gons are unsupported.
 - Nomad roughness, metalness, masks, density, and base or layer paint channels are ignored.
 - Sheared transforms are rejected for the affected object, which keeps its last valid state.

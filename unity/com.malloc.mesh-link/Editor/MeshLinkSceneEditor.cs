@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -161,6 +163,30 @@ namespace Malloc.MeshLink
                 if (EditorGUI.EndChangeCheck())
                 {
                     Session.SetMaterial(scene, row.MeshId, material, row.SlotIndex);
+                }
+
+                DrawTextureChannels(scene, row);
+            }
+        }
+
+        private void DrawTextureChannels(MeshLinkScene scene,
+            MeshLinkSession.MaterialRowSnapshot row)
+        {
+            foreach (var channel in Session.GetTextureChannels(row.MeshId, row.SlotIndex))
+            {
+                var material = row.Renderer.sharedMaterials[row.SlotIndex];
+                var properties = MeshLinkTextures.GetTextureProperties(material);
+                var resolved = Session.ResolveTextureProperty(material, channel, scene.MaterialMap);
+                var options = new[] { "(unbound)" }.Concat(properties).ToArray();
+                var selected = Array.IndexOf(properties, resolved) + 1;
+                using (new EditorGUI.DisabledScope(scene.MaterialMap == null || material == null))
+                {
+                    EditorGUI.indentLevel++;
+                    var next = EditorGUILayout.Popup(channel, selected, options);
+                    EditorGUI.indentLevel--;
+                    if (next != selected)
+                        Session.SetTextureBinding(scene, row.MeshId, row.SlotIndex,
+                            channel, next == 0 ? null : properties[next - 1]);
                 }
             }
         }

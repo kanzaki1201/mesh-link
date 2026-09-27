@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from mesh_link.encode import encode_mesh_delta, encode_mesh_full
-from mesh_link.session import Session
+from mesh_link.session import Session, channel_key
 from mesh_link.transport import encode_frame, read_frame
 
 
@@ -143,3 +143,85 @@ def test_connection_loss_stops():
         receive_until(session, lambda: not session.running)
         assert not session.ready
         assert "disconnect" in session.status.lower()
+
+
+def ready_textures(session, sock, incoming):
+    incoming.get(timeout=3)
+    transmit(sock, type="hello", protocol=1, capabilities=["material", "texture"])
+    transmit(sock, type="session_config", active_source="client")
+    receive_until(session, lambda: session.ready)
+
+
+def test_texture_order_resend_clear_and_request():
+    with listener() as (session, sock, incoming):
+        ready_textures(session, sock, incoming)
+        red = b"\x89PNG\r\n\x1a\nred"
+        blue = b"\x89PNG\r\n\x1a\nblue"
+        assert session.send_bakes([("mesh", 1, "Paint", {"color": red, "x_mask": blue})]) == 2
+        first = [incoming.get(timeout=3) for _ in range(3)]
+        assert [header["type"] for header, _ in first] == ["texture", "texture", "material"]
+        ids = {header["name"]: header["texture_id"] for header, _ in first[:2]}
+        material = first[2][0]
+        assert material == {
+            "type": "material", "mesh_id": "mesh", "slot_index": 1,
+            "live_sync": False, "material": {"textures": {
+                "color": {"texture_id": ids["Paint color.png"], "name": "Paint color.png"},
+                "x_mask": {"texture_id": ids["Paint x_mask.png"], "name": "Paint x_mask.png"},
+            }},
+        }
+        assert first[0][1] == red and first[1][1] == blue
+        assert session.send_bakes([("mesh", 1, "Paint", {"color": red})]) == 1
+        cleared, payload = incoming.get(timeout=3)
+        assert payload == b""
+        assert cleared["material"]["textures"]["x_mask"] == {}
+        assert "texture_id" not in cleared["material"]["textures"]["x_mask"]
+        transmit(sock, type="request_texture", texture_id=ids["Paint color.png"])
+        receive_until(session, lambda: not incoming.empty())
+        assert incoming.get(timeout=3)[1] == red
+        transmit(sock, type="request_texture", texture_id=ids["Paint x_mask.png"])
+        receive_until(session, lambda: not incoming.empty())
+        error, _ = incoming.get(timeout=3)
+        assert error["type"] == "error"
+        assert error["texture_id"] == ids["Paint x_mask.png"]
+        assert session.send_bakes([("mesh", 1, "Paint", {})]) == 0
+        incoming.get(timeout=3)
+        assert session.send_bakes([("mesh", 1, "Paint", {"color": red})]) == 1
+        resent = incoming.get(timeout=3)
+        assert resent[0]["type"] == "texture" and resent[1] == red
+        assert incoming.get(timeout=3)[0]["type"] == "material"
+
+
+def test_texture_queue_refusal_sends_nothing():
+    with listener() as (session, sock, incoming):
+        ready_textures(session, sock, incoming)
+        session.transport.max_queue_bytes = 100
+        with pytest.raises(ValueError, match="queue limit"):
+            session.send_bakes([("mesh", 0, "Paint", {"color": b"x" * 100})])
+        assert incoming.empty()
+        assert session._slots == {} and session._textures == {}
+
+
+def test_texture_move_resends_after_last_reference_clears():
+    with listener() as (session, sock, incoming):
+        ready_textures(session, sock, incoming)
+        red, blue = b'red', b'blue'
+        session.send_bakes([('a', 0, 'A', {'color': red}),
+                            ('b', 0, 'B', {'color': blue})])
+        for _ in range(4):
+            incoming.get(timeout=3)
+        session.send_bakes([('a', 0, 'A', {'color': blue}),
+                            ('b', 0, 'B', {'color': red})])
+        messages = [incoming.get(timeout=3) for _ in range(3)]
+        assert [header['type'] for header, _ in messages] == [
+            'material', 'texture', 'material']
+        assert messages[1][1] == red
+
+
+@pytest.mark.parametrize("label", ["", "Mask", "two words", "a-b", "é"])
+def test_invalid_channel_label(label):
+    with pytest.raises(ValueError, match="label"):
+        channel_key(label)
+
+
+def test_valid_channel_label():
+    assert channel_key("mask_2") == "x_mask_2"

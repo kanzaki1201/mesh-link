@@ -11,6 +11,13 @@ def register():
     class MeshLinkPreferences(bpy.types.AddonPreferences):
         bl_idname = __package__
         pair_tokens: bpy.props.CollectionProperty(type=MeshLinkToken)
+        texture_size: bpy.props.EnumProperty(
+            name="Texture Size", items=[(value, value, "")
+                                        for value in ("512", "1024", "2048", "4096")],
+            default="1024")
+
+        def draw(self, _context):
+            self.layout.prop(self, "texture_size")
 
     global CLASSES
     CLASSES = (MeshLinkToken, MeshLinkPreferences, *panel.CLASSES)

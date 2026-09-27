@@ -1,11 +1,11 @@
 # Mesh Link
 
-Mesh Link shows your Blender or Nomad Sculpt meshes live in the Unity Editor.
+Mesh Link shows your [Blender](https://www.blender.org/) or [Nomad Sculpt](https://nomadsculpt.com/) meshes live in the Unity Editor.
 You edit in Blender or Nomad.
 Unity updates the preview while you work, with your own Unity materials and shaders.
 
 This is an unofficial project.
-It is not affiliated with or endorsed by Nomad Sculpt or its developer.
+It is not affiliated with or endorsed by Blender, Nomad Sculpt or its developer.
 
 <!-- screenshot: Blender and Unity side by side with a live preview -->
 
@@ -252,6 +252,7 @@ unity test C:/path/to/UnityProject --mode EditMode --filter Malloc.MeshLink --ou
 
 ## Credits
 [Nomad Link](https://github.com/stephomi/nomad-link), by stephomi
+Support Nomad Sculpt!: https://nomadsculpt.com/
 
 
 ## License

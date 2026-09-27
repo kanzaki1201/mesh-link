@@ -69,12 +69,12 @@ namespace Malloc.MeshLink
                 if (!fields.TryGetValue("material", out var materialJson) ||
                     !ReadFields(materialJson).TryGetValue("textures", out var texturesJson)) return;
                 var updates = ReadFields(texturesJson);
-                var textureIds = updates.ToDictionary(update => update.Key,
-                    update => ReadTextureId(update.Value), StringComparer.Ordinal);
+                var textureIds = updates.Where(update => IsSupportedChannel(update.Key))
+                    .ToDictionary(update => update.Key,
+                        update => ReadTextureId(update.Value), StringComparer.Ordinal);
                 var channels = GetOrCreateChannels(meshId, slot);
                 foreach (var update in textureIds)
                 {
-                    if (!IsSupportedChannel(update.Key)) continue;
                     ApplyChannel(channels, update.Key, update.Value);
                 }
 
@@ -93,7 +93,7 @@ namespace Malloc.MeshLink
         {
             if (json == "null") return null;
             var fields = ReadFields(json);
-            if (!fields.TryGetValue("texture_id", out var idJson)) return null;
+            if (!fields.TryGetValue("texture_id", out var idJson) || idJson == "null") return null;
             if (idJson.Length < 2 || idJson[0] != '"' || idJson[idJson.Length - 1] != '"')
                 throw new FormatException("Invalid texture_id.");
             return JsonUtility.FromJson<TextureReference>(json).texture_id;
@@ -153,7 +153,7 @@ namespace Malloc.MeshLink
             blobs.Add(header.texture_id, binary);
             foreach (var objectSlots in slots)
             {
-                foreach (var slot in objectSlots.Value)
+                foreach (var slot in objectSlots.Value.ToArray())
                 {
                     var changed = false;
                     foreach (var channel in slot.Value)
@@ -373,6 +373,7 @@ namespace Malloc.MeshLink
                     decoded.Remove(key);
                 }
             }
+            referenced.RemoveWhere(id => !active.Contains(id) && !blobs.ContainsKey(id));
         }
 
         private static Dictionary<string, string> ReadFields(string json)

@@ -4,7 +4,7 @@ Mesh Link provides a one-way live mesh link into the Unity Editor.
 Nomad Sculpt sends through Nomad App Linking while Unity uses connect mode.
 Blender sends through the Mesh Link extension while Unity uses listen mode.
 Unity previews meshes with Unity materials that you assign.
-Preview objects and meshes are transient; material assignments are saved on the `MeshLinkScene` component.
+Preview objects and meshes are transient; material assignments are saved in a shared `MeshLinkMaterialMap` asset.
 
 ## Requirements
 
@@ -33,6 +33,7 @@ Add a `MeshLinkScene` component to an empty GameObject and use its Inspector:
 - `Host`: the Nomad device address in connect mode, or the local address Unity binds in listen mode.
 - `Port`: the TCP port, matching the source connection settings.
 - `Listen`: on for Blender; off for Nomad.
+- `Material Map`: select a shared asset or use `Create Material Map` to create one.
 - `Enable Sync` / `Disable Sync`: start or stop the session; connection fields are locked while sync is enabled.
 
 The `Status` field shows connection progress and errors.
@@ -99,10 +100,11 @@ Each row shows the object and slot names, a short mesh ID, and a Unity material 
 Assign, replace, or clear a material in that field.
 Objects that share geometry keep independent material assignments.
 
-Assignments are stored on the `MeshLinkScene` component, so they survive a stop, a reconnect, and a Unity restart.
+Assignments in a Material Map asset survive a stop, a reconnect, and a Unity restart, and scenes can share the asset.
 A stored assignment is reapplied when an object with the same mesh ID and slot appears, or, failing that, the same object and slot names.
-Assignments record Undo and mark the scene dirty; save the scene to keep them.
-`Stored Materials (N)` shows the store size, and `Clear Stored Materials` empties it.
+Assignments record Undo and save the Material Map asset; assigning the asset to a scene component dirties that scene.
+Without a Material Map, assignments affect only the current preview.
+`Stored Materials (N)` shows the map entry count, and `Clear Stored Materials` empties the map.
 MToon materials can show close-range bloom on synchronized meshes.
 
 <!-- screenshot: Synced Object Materials with separate object and slot assignments -->

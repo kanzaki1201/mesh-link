@@ -21,6 +21,7 @@ namespace Malloc.MeshLink.Tests
         private Scene scene;
         private GameObject ownerObject;
         private MeshLinkScene owner;
+        private MeshLinkMaterialMap materialMap;
         private Material materialA;
         private Material materialB;
         private Material materialC;
@@ -36,6 +37,8 @@ namespace Malloc.MeshLink.Tests
             ownerObject = new GameObject("Mesh Link Controller");
             SceneManager.MoveGameObjectToScene(ownerObject, scene);
             owner = ownerObject.AddComponent<MeshLinkScene>();
+            materialMap = ScriptableObject.CreateInstance<MeshLinkMaterialMap>();
+            owner.MaterialMap = materialMap;
             CreateMaterials();
         }
 
@@ -53,6 +56,7 @@ namespace Malloc.MeshLink.Tests
             Destroy(materialA);
             Destroy(materialB);
             Destroy(materialC);
+            Destroy(materialMap);
             if (ownerObject != null)
             {
                 UnityEngine.Object.DestroyImmediate(ownerObject);
@@ -76,7 +80,7 @@ namespace Malloc.MeshLink.Tests
                 .OrderBy(name => name)
                 .ToArray();
 
-            Assert.That(fields, Is.EqualTo(new[] { "host", "listen", "materialStore", "port" }));
+            Assert.That(fields, Is.EqualTo(new[] { "host", "listen", "materialMap", "port" }));
             Assert.That(owner.Listen, Is.False);
         }
 
@@ -96,7 +100,7 @@ namespace Malloc.MeshLink.Tests
                 Assert.That(scene.isDirty, Is.False);
                 Assert.That(session.SetMaterial(owner, "mesh-a", materialA), Is.True);
                 Assert.That(session.SetMaterial(owner, "mesh-i", materialB), Is.True);
-                Assert.That(scene.isDirty, Is.True);
+                Assert.That(scene.isDirty, Is.False);
 
                 var rendererA = session.FindRenderer("mesh-a");
                 var rendererI = session.FindRenderer("mesh-i");
@@ -124,7 +128,7 @@ namespace Malloc.MeshLink.Tests
                 Assert.That(session.SetMaterial(owner, "mesh-i", null), Is.True);
                 Assert.That(rendererA.sharedMaterial, Is.SameAs(materialC));
                 Assert.That(rendererI.sharedMaterial, Is.Null);
-                Assert.That(scene.isDirty, Is.True);
+                Assert.That(scene.isDirty, Is.False);
 
                 peer.Send(ObjectDeleteJson("mesh-b", true));
                 WaitUntil(() => session.ObjectCount == 2);
@@ -148,7 +152,7 @@ namespace Malloc.MeshLink.Tests
 
                 Assert.That(session.SetMaterial(owner, "mesh-a", null), Is.True);
                 Assert.That(rendererA.sharedMaterial, Is.Null);
-                Assert.That(scene.isDirty, Is.True);
+                Assert.That(scene.isDirty, Is.False);
 
                 peer.CloseConnection();
                 WaitUntil(() => !session.IsRunning);
@@ -377,9 +381,9 @@ namespace Malloc.MeshLink.Tests
                 WaitUntil(() => Row("mesh-a").Name == "Renamed");
                 Assert.That(Row("mesh-a").SlotName, Is.EqualTo("Renamed"));
                 Assert.That(Row("mesh-a").Label, Is.EqualTo("Renamed / Renamed"));
-                Assert.That(owner.MaterialStore.Single().objectName, Is.EqualTo("Renamed"));
-                Assert.That(owner.MaterialStore.Single().slotName, Is.EqualTo("Renamed"));
-                Assert.That(scene.isDirty, Is.True);
+                Assert.That(owner.MaterialMap.Entries.Single().objectName, Is.EqualTo("Renamed"));
+                Assert.That(owner.MaterialMap.Entries.Single().slotName, Is.EqualTo("Renamed"));
+                Assert.That(scene.isDirty, Is.False);
             }
         }
 
@@ -464,20 +468,20 @@ namespace Malloc.MeshLink.Tests
                 peer.Send(MeshFullJson("mesh-a", "geometry-a", "Renamed", false, false), MeshBinary(1f));
                 WaitUntil(() => session.ObjectCount == 1);
                 Assert.That(session.FindRenderer("mesh-a").sharedMaterial, Is.SameAs(materialA));
-                Assert.That(owner.MaterialStore.Single().objectName, Is.EqualTo("Renamed"));
-                Assert.That(owner.MaterialStore.Single().slotName, Is.EqualTo("Renamed"));
-                Assert.That(scene.isDirty, Is.True);
+                Assert.That(owner.MaterialMap.Entries.Single().objectName, Is.EqualTo("Renamed"));
+                Assert.That(owner.MaterialMap.Entries.Single().slotName, Is.EqualTo("Renamed"));
+                Assert.That(scene.isDirty, Is.False);
                 peer.Send(ObjectDeleteJson("mesh-a", false));
                 WaitUntil(() => session.ObjectCount == 0);
                 peer.Send(MeshFullJson("mesh-new", "geometry-a", "Renamed", false, false), MeshBinary(1f));
                 WaitUntil(() => session.ObjectCount == 1);
                 Assert.That(session.FindRenderer("mesh-new").sharedMaterial, Is.SameAs(materialA));
-                Assert.That(owner.MaterialStore.Single().meshId, Is.EqualTo("mesh-a"));
+                Assert.That(owner.MaterialMap.Entries.Single().meshId, Is.EqualTo("mesh-a"));
             }
         }
 
         [Test]
-        public void MaterialAssignmentUndoRestoresRendererAndStore()
+        public void MaterialAssignmentUndoRestoresRendererAndMap()
         {
             using (var peer = new FakePeer())
             {
@@ -489,16 +493,68 @@ namespace Malloc.MeshLink.Tests
                 Undo.IncrementCurrentGroup();
                 Assert.That(session.SetMaterial(owner, "mesh-a", materialA, 1), Is.True);
                 Undo.FlushUndoRecordObjects();
-                Assert.That(scene.isDirty, Is.True);
-                var stored = owner.MaterialStore.Single();
+                var stored = owner.MaterialMap.Entries.Single();
                 Assert.That(stored.meshId, Is.EqualTo("mesh-a"));
                 Assert.That(stored.slotIndex, Is.EqualTo(1));
                 Assert.That(stored.objectName, Is.EqualTo("Object"));
                 Assert.That(stored.slotName, Is.EqualTo("Detail"));
                 Assert.That(stored.material, Is.SameAs(materialA));
                 Undo.PerformUndo();
-                Assert.That(owner.MaterialStore, Is.Empty);
+                Assert.That(owner.MaterialMap.Entries, Is.Empty);
                 Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.Null);
+            }
+        }
+
+        [Test]
+        public void MaterialAssignmentWithoutMapChangesRendererOnly()
+        {
+            owner.MaterialMap = null;
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                WaitUntil(() => session.ObjectCount == 1);
+                Assert.That(session.SetMaterial(owner, "mesh-a", materialA, 1), Is.True);
+                Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialA));
+                Assert.That(owner.MaterialMap, Is.Null);
+            }
+        }
+
+        [Test]
+        public void TwoScenesShareMaterialMapEntries()
+        {
+            using (var peer = new FakePeer())
+            {
+                pairPort = peer.Port;
+                CompleteHandshake(peer, false);
+                peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                WaitUntil(() => session.ObjectCount == 1);
+                session.SetMaterial(owner, "mesh-a", materialA, 1);
+                session.StopForTests();
+                EditorPrefs.DeleteKey(MeshLinkSession.PairTokenKey("127.0.0.1", pairPort));
+            }
+
+            var otherObject = new GameObject("Other Controller");
+            try
+            {
+                SceneManager.MoveGameObjectToScene(otherObject, scene);
+                var other = otherObject.AddComponent<MeshLinkScene>();
+                other.MaterialMap = materialMap;
+                using (var peer = new FakePeer())
+                {
+                    pairPort = peer.Port;
+                    CompleteHandshake(peer, false, other);
+                    peer.Send(FaceMaterialJson(), FaceMaterialBinary());
+                    WaitUntil(() => session.ObjectCount == 1);
+                    Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialA));
+                    Assert.That(other.MaterialMap.Entries.Single().material, Is.SameAs(materialA));
+                }
+            }
+            finally
+            {
+                session.StopForTests();
+                Destroy(otherObject);
             }
         }
 
@@ -514,7 +570,7 @@ namespace Malloc.MeshLink.Tests
                 WaitUntil(() => session.ObjectCount == 1);
                 session.SetMaterial(owner, "mesh-a", materialB, 1);
                 session.StopForTests();
-                Assert.That(owner.MaterialStore.Count, Is.EqualTo(1));
+                Assert.That(owner.MaterialMap.Entries.Count, Is.EqualTo(1));
                 EditorPrefs.DeleteKey(MeshLinkSession.PairTokenKey("127.0.0.1", pairPort));
             }
             using (var peer = new FakePeer())
@@ -525,7 +581,7 @@ namespace Malloc.MeshLink.Tests
                 WaitUntil(() => session.ObjectCount == 1);
                 Assert.That(session.FindRenderer(meshId).sharedMaterials,
                     Is.EqualTo(new Material[] { null, materialB }));
-                Assert.That(owner.MaterialStore.Single().meshId, Is.EqualTo("mesh-a"));
+                Assert.That(owner.MaterialMap.Entries.Single().meshId, Is.EqualTo("mesh-a"));
             }
         }
 
@@ -541,7 +597,7 @@ namespace Malloc.MeshLink.Tests
                 session.SetMaterial(owner, "mesh-a", materialB, 1);
                 peer.Send(MeshFullJson("mesh-a", "geometry-b", "Object", false, false), MeshBinary(2f));
                 WaitUntil(() => session.FindRenderer("mesh-a").sharedMaterials.Length == 1);
-                Assert.That(owner.MaterialStore.Single().material, Is.SameAs(materialB));
+                Assert.That(owner.MaterialMap.Entries.Single().material, Is.SameAs(materialB));
                 peer.Send(FaceMaterialJson(), FaceMaterialBinary());
                 WaitUntil(() => session.FindRenderer("mesh-a").sharedMaterials.Length == 2);
                 Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialB));
@@ -552,10 +608,12 @@ namespace Malloc.MeshLink.Tests
         public void DeletedMaterialAssetLeavesRecreatedSlotUnassigned()
         {
             var path = AssetDatabase.GenerateUniqueAssetPath("Assets/MeshLinkMaterialStoreTest.mat");
+            var mapPath = AssetDatabase.GenerateUniqueAssetPath("Assets/MeshLinkMaterialMapTest.asset");
             var asset = new Material(materialA.shader);
-            AssetDatabase.CreateAsset(asset, path);
             try
             {
+                AssetDatabase.CreateAsset(materialMap, mapPath);
+                AssetDatabase.CreateAsset(asset, path);
                 using (var peer = new FakePeer())
                 {
                     pairPort = peer.Port;
@@ -563,18 +621,20 @@ namespace Malloc.MeshLink.Tests
                     peer.Send(FaceMaterialJson(), FaceMaterialBinary());
                     WaitUntil(() => session.ObjectCount == 1);
                     session.SetMaterial(owner, "mesh-a", asset, 1);
+                    Assert.That(EditorUtility.IsDirty(materialMap), Is.False);
                     Assert.That(AssetDatabase.DeleteAsset(path), Is.True);
                     peer.Send(ObjectDeleteJson("mesh-a", false));
                     WaitUntil(() => session.ObjectCount == 0);
                     peer.Send(FaceMaterialJson(), FaceMaterialBinary());
                     WaitUntil(() => session.ObjectCount == 1);
                     Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1] == null, Is.True);
-                    Assert.That(owner.MaterialStore.Count, Is.EqualTo(1));
+                    Assert.That(owner.MaterialMap.Entries.Count, Is.EqualTo(1));
                 }
             }
             finally
             {
                 AssetDatabase.DeleteAsset(path);
+                AssetDatabase.DeleteAsset(mapPath);
             }
         }
 
@@ -597,11 +657,11 @@ namespace Malloc.MeshLink.Tests
                 {
                     session.ClearStoredMaterials(owner);
                     Undo.FlushUndoRecordObjects();
-                    Assert.That(owner.MaterialStore, Is.Empty);
+                    Assert.That(owner.MaterialMap.Entries, Is.Empty);
                     Assert.That(changes, Is.EqualTo(1));
                     Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialA));
                     Undo.PerformUndo();
-                    Assert.That(owner.MaterialStore.Single().material, Is.SameAs(materialA));
+                    Assert.That(owner.MaterialMap.Entries.Single().material, Is.SameAs(materialA));
                 }
                 finally
                 {
@@ -624,10 +684,10 @@ namespace Malloc.MeshLink.Tests
                 Undo.IncrementCurrentGroup();
                 session.SetMaterial(owner, "mesh-a", null, 1);
                 Undo.FlushUndoRecordObjects();
-                Assert.That(owner.MaterialStore, Is.Empty);
+                Assert.That(owner.MaterialMap.Entries, Is.Empty);
                 Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.Null);
                 Undo.PerformUndo();
-                Assert.That(owner.MaterialStore.Single().material, Is.SameAs(materialA));
+                Assert.That(owner.MaterialMap.Entries.Single().material, Is.SameAs(materialA));
                 Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialA));
             }
         }
@@ -1055,9 +1115,12 @@ namespace Malloc.MeshLink.Tests
             }
         }
 
-        private void CompleteHandshake(FakePeer peer, bool testEarlyFrame)
+        private void CompleteHandshake(
+            FakePeer peer,
+            bool testEarlyFrame,
+            MeshLinkScene controller = null)
         {
-            session.Enable(owner, "127.0.0.1", peer.Port);
+            session.Enable(controller == null ? owner : controller, "127.0.0.1", peer.Port);
             peer.WaitForConnection(session);
             var hello = JsonUtility.FromJson<HelloProbe>(
                 peer.ReceiveJson(session));

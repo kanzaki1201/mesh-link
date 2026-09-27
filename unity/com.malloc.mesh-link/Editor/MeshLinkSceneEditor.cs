@@ -29,6 +29,24 @@ namespace Malloc.MeshLink
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("host"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("port"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("listen"));
+                var materialMap = serializedObject.FindProperty("materialMap");
+                EditorGUILayout.PropertyField(materialMap);
+                if (materialMap.objectReferenceValue == null &&
+                    GUILayout.Button("Create Material Map"))
+                {
+                    var path = EditorUtility.SaveFilePanelInProject(
+                        "Create Material Map", "MeshLinkMaterialMap", "asset",
+                        "Choose where to save the Mesh Link material map.");
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        var map = ScriptableObject.CreateInstance<MeshLinkMaterialMap>();
+                        AssetDatabase.CreateAsset(map, path);
+                        materialMap.objectReferenceValue = map;
+                        serializedObject.ApplyModifiedProperties();
+                    }
+                    // The modal save panel breaks the current layout pass.
+                    GUIUtility.ExitGUI();
+                }
             }
 
             serializedObject.ApplyModifiedProperties();
@@ -48,9 +66,17 @@ namespace Malloc.MeshLink
         private void DrawStoredMaterials(MeshLinkScene scene)
         {
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField($"Stored Materials ({scene.MaterialStore.Count})", EditorStyles.boldLabel);
-            if (GUILayout.Button("Clear Stored Materials"))
-                Session.ClearStoredMaterials(scene);
+            var map = scene.MaterialMap;
+            EditorGUILayout.LabelField(
+                $"Stored Materials ({(map == null ? 0 : map.Entries.Count)})",
+                EditorStyles.boldLabel);
+            using (new EditorGUI.DisabledScope(map == null))
+            {
+                if (GUILayout.Button(new GUIContent(
+                    "Clear Stored Materials",
+                    "Removes every entry from this map. Every scene that uses the map loses them.")))
+                    Session.ClearStoredMaterials(scene);
+            }
         }
 
         private void DrawSessionButton(

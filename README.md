@@ -219,11 +219,14 @@ Restart Blender after source changes.
 
 ### Unity package from source
 
-Put the repository in `Packages/mesh-link` of a Unity project and add this entry to `Packages/manifest.json`:
+Clone the repository to a folder outside your Unity projects.
+Add an entry with the absolute path to `Packages/manifest.json` of each Unity project that uses it:
 
 ```json
-"com.malloc.mesh-link": "file:mesh-link/unity/com.malloc.mesh-link"
+"com.malloc.mesh-link": "file:C:/path/to/mesh-link/unity/com.malloc.mesh-link"
 ```
+
+All projects and the Blender junction then use the same checkout.
 
 ### Tests
 
@@ -241,10 +244,10 @@ blender --background --factory-startup --python blender/tests/blender_bake_smoke
 ```
 
 For Unity tests, add `com.malloc.mesh-link` to the `testables` array of the host manifest.
-With the Unity CLI, run this from the repository root in the local checkout layout:
+With the Unity CLI, run this with the path of that Unity project:
 
 ```powershell
-unity test ../.. --mode EditMode --filter Malloc.MeshLink --output mesh-link-test-results.xml
+unity test C:/path/to/UnityProject --mode EditMode --filter Malloc.MeshLink --output mesh-link-test-results.xml
 ```
 
 ## Credits

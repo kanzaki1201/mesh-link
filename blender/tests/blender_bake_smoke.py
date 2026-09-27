@@ -4,6 +4,7 @@ import struct
 import sys
 import tempfile
 import traceback
+import types
 import zlib
 
 import bpy
@@ -209,6 +210,7 @@ def main():
         assert len(bpy.data.materials) == old_materials
 
     assert_restored()
+
     original_channel = bake._bake_channel
     calls = []
 
@@ -233,6 +235,57 @@ def main():
     finally:
         bake._bake_channel = original_channel
     assert_restored()
+
+    from mesh_link import handlers
+
+    obj_flag = make_object('Smoke Active Texture', [(-1, 1)])
+    material_flag = make_material('Smoke Active Paint', red)
+    obj_flag.data.materials.append(material_flag)
+    flag_nodes = material_flag.node_tree.nodes
+    shader = flag_nodes.get('Principled BSDF')
+    flag_image = next(node for node in flag_nodes if node.type == 'TEX_IMAGE')
+    flag_nodes.active = flag_image
+    flag_nodes.active = shader
+    assert flag_image.show_texture
+
+    obj_collection = make_object('Smoke Collection Hidden', [(-1, 1)])
+    obj_collection.data.materials.append(material_flag)
+    bpy.context.collection.objects.unlink(obj_collection)
+    parent = bpy.data.collections.new('Smoke Render Disabled')
+    child = bpy.data.collections.new('Smoke Child')
+    bpy.context.scene.collection.children.link(parent)
+    parent.children.link(child)
+    child.objects.link(obj_collection)
+    parent.hide_render = True
+
+    sent = []
+    handlers._sync = types.SimpleNamespace(
+        objects=lambda _view: {'flag': obj_flag, 'collection': obj_collection},
+        sent={'flag', 'collection'})
+
+    def send_bakes(slots):
+        sent.extend(slots)
+        return sum(len(channels) for _, _, _, channels in slots)
+
+    handlers._session = types.SimpleNamespace(
+        running=True, ready=True, capabilities={'material', 'texture'},
+        send_bakes=send_bakes, status='Connected')
+    preferences = types.SimpleNamespace(addons={
+        'mesh_link': types.SimpleNamespace(preferences=types.SimpleNamespace(texture_size='64'))})
+    context = types.SimpleNamespace(view_layer=bpy.context.view_layer, preferences=preferences)
+    handlers.bake_and_send(context)
+    assert [mesh_id for mesh_id, *_ in sent] == ['flag']
+    assert handlers._session.status == 'Sent 1 textures, skipped 1 hidden objects'
+    assert flag_nodes.active == shader
+    assert flag_image.show_texture
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+    obj_flag.select_set(True)
+    bpy.context.view_layer.objects.active = obj_flag
+    scene.render.engine = 'CYCLES'
+    scene.render.bake.target = 'IMAGE_TEXTURES'
+    assert bpy.ops.object.bake(type='EMIT') == {'FINISHED'}
 
 
 try:

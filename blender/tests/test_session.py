@@ -243,8 +243,9 @@ def test_stopped_transport_reports_disconnect_reason():
     session.ready = session.running = True
     session.capabilities = {'material', 'texture'}
     session.status = 'Listener disconnected'
+    session.transport._inbound.append(({'type': 'error', 'message': 'Listener rejected texture'}, b''))
     session.transport._stop.set()
-    with pytest.raises(ValueError, match='Listener disconnected'):
+    with pytest.raises(ValueError, match='Listener rejected texture'):
         session.send_bakes([('mesh', 0, 'Paint', {'color': b'png'})])
 
 

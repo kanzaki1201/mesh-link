@@ -6,6 +6,19 @@ import bpy
 from .session import channel_key
 
 
+def render_enabled(obj, view_layer):
+    if not obj.visible_get(view_layer=view_layer) or obj.hide_render:
+        return False
+
+    def enabled(layer, parent_enabled=True):
+        current = parent_enabled and not layer.exclude and not layer.collection.hide_render
+        if current and obj.name in layer.collection.objects:
+            return True
+        return any(enabled(child, current) for child in layer.children)
+
+    return enabled(view_layer.layer_collection)
+
+
 def ensure_channel_group():
     group = bpy.data.node_groups.get("Mesh Link Channel")
     if group is None:
@@ -109,13 +122,20 @@ def _bake_slot(obj, material, size):
         raise ValueError(f"{obj.name}: no active UV layer")
     uv = obj.data.uv_layers.active
     render_uv = next((layer.name for layer in obj.data.uv_layers if layer.active_render), None)
+    nodes = material.node_tree.nodes
+    active = nodes.active
     paint_slot = material.paint_active_slot
+    # Setting nodes.active to the bake target clears the active texture flag on every other node.
+    shown = {node.name: node.show_texture for node in nodes}
     try:
         uv.active_render = True
         return {channel: _bake_channel(obj, material, channel, bake_type, source, output, size)
                 for channel, bake_type, source, output in sources}
     finally:
         material.paint_active_slot = paint_slot
+        nodes.active = active
+        for node in nodes:
+            node.show_texture = shown.get(node.name, False)
         if render_uv is not None:
             obj.data.uv_layers[render_uv].active_render = True
 
@@ -203,7 +223,7 @@ def bake_objects(objects, size):
         bake.use_clear = True
         bpy.ops.object.select_all(action='DESELECT')
         for mesh_id, obj in objects:
-            if not obj.visible_get(view_layer=view_layer) or obj.hide_render:
+            if not render_enabled(obj, view_layer):
                 continue
             obj.select_set(True)
             view_layer.objects.active = obj

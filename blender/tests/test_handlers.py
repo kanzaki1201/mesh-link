@@ -321,12 +321,25 @@ def test_hidden_geometry_waits_until_visible(setup):
 def test_bake_skips_hidden_sent_objects_and_counts_them(handlers, monkeypatch):
     from mesh_link import bake
 
-    visible = types.SimpleNamespace(visible_get=lambda **_kw: True, hide_render=False)
-    hidden = types.SimpleNamespace(visible_get=lambda **_kw: False, hide_render=False)
-    render_off = types.SimpleNamespace(visible_get=lambda **_kw: True, hide_render=True)
+    def obj(name, visible=True, hide_render=False):
+        return types.SimpleNamespace(name=name, visible_get=lambda **_kw: visible,
+                                     hide_render=hide_render)
+
+    def layer(names=(), children=(), exclude=False, hide_render=False):
+        return types.SimpleNamespace(exclude=exclude, children=children,
+                                     collection=types.SimpleNamespace(objects=names,
+                                                                      hide_render=hide_render))
+
+    visible, hidden, render_off = obj('Visible'), obj('Hidden', False), obj('Render off', hide_render=True)
+    parent_off, excluded = obj('Parent off'), obj('Excluded')
+    view_layer = types.SimpleNamespace(layer_collection=layer(
+        ('Visible', 'Hidden', 'Render off'),
+        (layer(children=(layer(('Parent off',)),), hide_render=True),
+         layer(('Excluded',), exclude=True))))
     handlers._sync = types.SimpleNamespace(
-        objects=lambda _view: {'a': visible, 'b': hidden, 'c': render_off},
-        sent={'a', 'b', 'c'})
+        objects=lambda _view: {'a': visible, 'b': hidden, 'c': render_off,
+                               'd': parent_off, 'e': excluded},
+        sent={'a', 'b', 'c', 'd', 'e'})
     handlers._session = types.SimpleNamespace(
         running=True, ready=True, capabilities={'material', 'texture'},
         send_bakes=lambda _slots: 1, status='Connected')
@@ -336,7 +349,7 @@ def test_bake_skips_hidden_sent_objects_and_counts_them(handlers, monkeypatch):
                         lambda objects, _size: received.extend(objects) or [])
     preferences = types.SimpleNamespace(addons={
         'mesh_link': types.SimpleNamespace(preferences=types.SimpleNamespace(texture_size='512'))})
-    context = types.SimpleNamespace(view_layer=object(), preferences=preferences)
+    context = types.SimpleNamespace(view_layer=view_layer, preferences=preferences)
     handlers.bake_and_send(context)
     assert received == [('a', visible)]
-    assert handlers._session.status == 'Sent 1 textures, skipped 2 hidden objects'
+    assert handlers._session.status == 'Sent 1 textures, skipped 4 hidden objects'

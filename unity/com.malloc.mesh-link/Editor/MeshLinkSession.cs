@@ -9,7 +9,6 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
@@ -209,28 +208,33 @@ namespace Malloc.MeshLink
             }
 
             var materials = entry.Renderer.sharedMaterials;
-            Undo.RecordObject(scene, "Assign Mesh Link material");
+            var map = scene.MaterialMap;
+            if (map != null)
+                Undo.RecordObject(map, "Assign Mesh Link material");
             Undo.RecordObject(entry.Renderer, "Assign Mesh Link material");
-            StoreMaterial(scene, entry, material, slot);
+            if (map != null)
+            {
+                StoreMaterial(map, entry, material, slot);
+                SaveMaterialMap(map);
+            }
             materials[slot] = material;
             entry.Renderer.sharedMaterials = materials;
-            EditorSceneManager.MarkSceneDirty(scene.gameObject.scene);
             NotifyInspector();
             return true;
         }
 
-        private void StoreMaterial(MeshLinkScene scene, ObjectEntry entry, Material material, int slot)
+        private void StoreMaterial(MeshLinkMaterialMap map, ObjectEntry entry, Material material, int slot)
         {
-            var stored = scene.MaterialStore.Find(item => item.meshId == entry.MeshId && item.slotIndex == slot);
+            var stored = map.Entries.Find(item => item.meshId == entry.MeshId && item.slotIndex == slot);
             if (material == null)
             {
-                scene.MaterialStore.Remove(stored);
+                map.Entries.Remove(stored);
                 return;
             }
             if (stored == null)
             {
                 stored = new MaterialStoreEntry { meshId = entry.MeshId, slotIndex = slot };
-                scene.MaterialStore.Add(stored);
+                map.Entries.Add(stored);
             }
             stored.objectName = entry.State.name;
             var names = geometries[entry.GeometryId].Data.FaceMaterials.Names;
@@ -240,20 +244,24 @@ namespace Malloc.MeshLink
 
         internal void ClearStoredMaterials(MeshLinkScene scene)
         {
-            Undo.RecordObject(scene, "Clear Stored Materials");
-            scene.MaterialStore.Clear();
-            EditorSceneManager.MarkSceneDirty(scene.gameObject.scene);
+            var map = scene.MaterialMap;
+            if (map == null)
+                return;
+            Undo.RecordObject(map, "Clear Stored Materials");
+            map.Entries.Clear();
+            SaveMaterialMap(map);
             NotifyInspector();
         }
 
         private void ReapplyMaterials(ObjectEntry entry, MeshLinkFaceMaterials group, string objectName)
         {
             var materials = entry.Renderer.sharedMaterials;
+            var entries = owner.MaterialMap?.Entries;
             for (var slot = 0; slot < materials.Length; slot++)
             {
                 var slotName = group.Names == null ? objectName : group.Names[slot];
-                var stored = owner.MaterialStore.Find(item => item.meshId == entry.MeshId && item.slotIndex == slot)
-                    ?? owner.MaterialStore.Find(item => item.objectName == objectName && item.slotName == slotName);
+                var stored = entries?.Find(item => item.meshId == entry.MeshId && item.slotIndex == slot)
+                    ?? entries?.Find(item => item.objectName == objectName && item.slotName == slotName);
                 materials[slot] = stored?.material != null ? stored.material : null;
             }
             entry.Renderer.sharedMaterials = materials;
@@ -261,13 +269,26 @@ namespace Malloc.MeshLink
 
         private void RenameStoredMaterials(ObjectEntry entry)
         {
-            foreach (var stored in owner.MaterialStore.Where(item => item.meshId == entry.MeshId))
+            var map = owner.MaterialMap;
+            if (map == null)
+                return;
+            var changed = false;
+            foreach (var stored in map.Entries.Where(item => item.meshId == entry.MeshId))
             {
                 stored.objectName = entry.State.name;
                 if (geometries[entry.GeometryId].Data.FaceMaterials.Names == null)
                     stored.slotName = entry.State.name;
-                EditorSceneManager.MarkSceneDirty(owner.gameObject.scene);
+                changed = true;
             }
+            if (changed)
+                SaveMaterialMap(map);
+        }
+
+        private static void SaveMaterialMap(MeshLinkMaterialMap map)
+        {
+            EditorUtility.SetDirty(map);
+            if (EditorUtility.IsPersistent(map))
+                AssetDatabase.SaveAssetIfDirty(map);
         }
 
         internal void Pump()

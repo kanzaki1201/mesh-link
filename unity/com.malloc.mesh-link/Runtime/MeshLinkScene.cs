@@ -1,19 +1,7 @@
-using System;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace Malloc.MeshLink
 {
-    [Serializable]
-    internal sealed class MaterialStoreEntry
-    {
-        public string meshId;
-        public int slotIndex;
-        public string objectName;
-        public string slotName;
-        public Material material;
-    }
-
     [DisallowMultipleComponent]
     public sealed class MeshLinkScene : MonoBehaviour
     {
@@ -21,9 +9,9 @@ namespace Malloc.MeshLink
         [SerializeField] private int port = 48312;
         [SerializeField] private bool listen;
 
-        [SerializeField] private List<MaterialStoreEntry> materialStore = new List<MaterialStoreEntry>();
+        [SerializeField] private MeshLinkMaterialMap materialMap;
 
-        internal List<MaterialStoreEntry> MaterialStore => materialStore;
+        internal MeshLinkMaterialMap MaterialMap { get => materialMap; set => materialMap = value; }
 
         public string Host => host;
         public int Port => port;

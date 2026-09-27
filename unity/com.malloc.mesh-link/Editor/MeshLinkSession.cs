@@ -242,10 +242,10 @@ namespace Malloc.MeshLink
         }
 
         internal bool SetTextureBinding(MeshLinkScene scene, string meshId, int slot,
-            string channel, string property, bool invert = false)
+            string channel, string property, bool invert = false, bool updateProperty = true)
         {
             return running && owner == scene &&
-                textures.SetBinding(meshId, slot, channel, property, invert,
+                textures.SetBinding(meshId, slot, channel, property, invert, updateProperty,
                     FindRenderer, scene.MaterialMap);
         }
 

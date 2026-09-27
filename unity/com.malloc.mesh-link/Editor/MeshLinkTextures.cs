@@ -213,7 +213,7 @@ namespace Malloc.MeshLink
                 item.material == material && item.channel == channel);
             if (binding != null)
                 return (HasTextureProperty(material.shader, binding.property) ? binding.property : null,
-                    binding.invert);
+                    binding.invert && IsLinear(channel));
             if (channel == "color")
                 return (ResolveColorProperty(material.shader), false);
             if (channel == "emissive") return (FirstTextureProperty(material.shader, "_EmissionMap"), false);
@@ -240,18 +240,17 @@ namespace Malloc.MeshLink
         }
 
         internal bool SetBinding(string meshId, int slot, string channel, string property, bool invert,
-            Func<string, Renderer> findRenderer, MeshLinkMaterialMap map)
+            bool updateProperty, Func<string, Renderer> findRenderer, MeshLinkMaterialMap map)
         {
-            var renderer = findRenderer(meshId);
-            if (renderer == null || map == null || slot < 0 ||
-                slot >= renderer.sharedMaterials.Length) return false;
-            var material = renderer.sharedMaterials[slot];
-            if (material == null || !GetChannels(meshId, slot).Contains(channel) ||
-                !string.IsNullOrEmpty(property) && !HasTextureProperty(material.shader, property))
-                return false;
-            Undo.RecordObject(map, "Bind Mesh Link texture");
+            if (map == null) return false;
+            var material = BindableMaterial(findRenderer(meshId), meshId, slot, channel,
+                property, updateProperty);
+            if (material == null) return false;
             var binding = map.TextureBindings.Find(item =>
                 item.material == material && item.channel == channel);
+            if (!updateProperty && binding == null)
+                property = ResolveProperty(material, channel, map).Property;
+            Undo.RecordObject(map, "Bind Mesh Link texture");
             if (binding == null)
                 map.TextureBindings.Add(new TextureBindingEntry
                 {
@@ -259,7 +258,7 @@ namespace Malloc.MeshLink
                 });
             else
             {
-                binding.property = property;
+                if (updateProperty) binding.property = property;
                 binding.invert = invert;
             }
             EditorUtility.SetDirty(map);
@@ -272,6 +271,17 @@ namespace Malloc.MeshLink
             }
             notifyInspector();
             return true;
+        }
+
+        private Material BindableMaterial(Renderer renderer, string meshId, int slot,
+            string channel, string property, bool updateProperty)
+        {
+            if (renderer == null || slot < 0 || slot >= renderer.sharedMaterials.Length)
+                return null;
+            var material = renderer.sharedMaterials[slot];
+            return material != null && GetChannels(meshId, slot).Contains(channel) &&
+                (!updateProperty || string.IsNullOrEmpty(property) ||
+                HasTextureProperty(material.shader, property)) ? material : null;
         }
 
         internal static string[] GetTextureProperties(Material material)
@@ -306,7 +316,7 @@ namespace Malloc.MeshLink
                 channel == "roughness" || ExtraChannel.IsMatch(channel);
         }
 
-        private static bool IsLinear(string channel)
+        internal static bool IsLinear(string channel)
         {
             return channel != "color" && channel != "emissive";
         }

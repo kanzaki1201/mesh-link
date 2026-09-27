@@ -26,6 +26,7 @@ namespace Malloc.MeshLink.Tests
         private Material textureMaterialB;
         private Material textureMaterialC;
         private Texture2D baseTexture;
+        private Shader textureShader;
 
         [SetUp]
         public void SetUp()
@@ -48,6 +49,7 @@ namespace Malloc.MeshLink.Tests
             if (textureMaterialB != null) UnityEngine.Object.DestroyImmediate(textureMaterialB);
             if (textureMaterialC != null) UnityEngine.Object.DestroyImmediate(textureMaterialC);
             if (baseTexture != null) UnityEngine.Object.DestroyImmediate(baseTexture);
+            if (textureShader != null) UnityEngine.Object.DestroyImmediate(textureShader);
             if (textureMap != null) UnityEngine.Object.DestroyImmediate(textureMap);
             EditorPrefs.DeleteKey(MeshLinkSession.PairTokenKey("127.0.0.1", port));
             if (ownerObject != null)
@@ -570,10 +572,71 @@ namespace Malloc.MeshLink.Tests
                 Assert.That(invertedPixel.g, Is.EqualTo(255 - sourcePixel.g).Within(2));
                 Assert.That(invertedPixel.b, Is.EqualTo(255 - sourcePixel.b).Within(2));
                 Assert.That(invertedPixel.a, Is.EqualTo(sourcePixel.a).Within(2));
+                blender.Send(MaterialJson("\"metalness\":{},\"roughness\":{}"));
+                WaitUntil(() => session.DecodedTextureCount == 0);
+                Assert.That(inverted == null, Is.True);
                 session.StopForTests();
                 Assert.That(direct == null, Is.True);
                 Assert.That(inverted == null, Is.True);
                 Assert.That(session.DecodedTextureCount, Is.Zero);
+            }
+        }
+
+        [Test]
+        public void RoughnessDefaultsToInvertedSmoothnessTextureOnBlock()
+        {
+            StartPairedTexturePreview(out var blender);
+            using (blender)
+            {
+                textureShader = ShaderUtil.CreateShaderAsset("Shader \"Hidden/MeshLinkSmoothnessPreview\" { " +
+                    "Properties { _SmoothnessTex(\"Smoothness\", 2D) = \"white\" {} } " +
+                    "SubShader { Pass {} } }");
+                Assert.That(textureShader, Is.Not.Null);
+                Assert.That(textureShader.FindPropertyIndex("_SmoothnessTex"), Is.GreaterThanOrEqualTo(0));
+                Assert.That(textureShader.FindPropertyIndex("_RoughnessMap"), Is.LessThan(0));
+                Assert.That(owner.MaterialMap, Is.Null);
+                textureMaterialB = new Material(textureShader);
+                session.SetMaterial(owner, "mesh-a", textureMaterialB);
+                var png = Png(new Color(0.25f, 0.5f, 0.75f, 0.375f));
+                var id = TextureId(png);
+                blender.Send(TextureJson(id, png), png);
+                blender.Send(MaterialJson("\"roughness\":{\"texture_id\":\"" + id + "\"}"));
+                WaitUntil(() => BlockTexture(0, "_SmoothnessTex") != null);
+                var source = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);
+                try
+                {
+                    Assert.That(ImageConversion.LoadImage(source, png), Is.True);
+                    var original = ReadBack(source);
+                    var smoothness = ReadBack(BlockTexture(0, "_SmoothnessTex"));
+                    Assert.That(smoothness.r, Is.EqualTo(255 - original.r).Within(2));
+                    Assert.That(smoothness.g, Is.EqualTo(255 - original.g).Within(2));
+                    Assert.That(smoothness.b, Is.EqualTo(255 - original.b).Within(2));
+                    Assert.That(smoothness.a, Is.EqualTo(original.a).Within(2));
+                }
+                finally { UnityEngine.Object.DestroyImmediate(source); }
+            }
+        }
+
+        [Test]
+        public void InvertOnlyWriteKeepsUnresolvedProperty()
+        {
+            StartPairedTexturePreview(out var blender);
+            using (blender)
+            {
+                textureMap = ScriptableObject.CreateInstance<MeshLinkMaterialMap>();
+                owner.MaterialMap = textureMap;
+                textureMaterialB = new Material(Shader.Find("Standard"));
+                session.SetMaterial(owner, "mesh-a", textureMaterialB);
+                blender.Send(MaterialJson("\"normal\":{}"));
+                WaitUntil(() => session.GetTextureChannels("mesh-a", 0).Length == 1);
+                Assert.That(session.SetTextureBinding(owner, "mesh-a", 0, "normal", "_BumpMap"), Is.True);
+                textureMaterialB.shader = Shader.Find("Unlit/Texture");
+                Assert.That(session.ResolveTextureProperty(textureMaterialB, "normal", textureMap).Property,
+                    Is.Null);
+                Assert.That(session.SetTextureBinding(owner, "mesh-a", 0, "normal", null, true, false),
+                    Is.True);
+                Assert.That(textureMap.TextureBindings.Single().property, Is.EqualTo("_BumpMap"));
+                Assert.That(textureMap.TextureBindings.Single().invert, Is.True);
             }
         }
 
@@ -788,9 +851,10 @@ namespace Malloc.MeshLink.Tests
                 WaitUntil(() => BlockTexture(0, "_MainTex") != null);
                 var previous = BlockTexture(0, "_MainTex");
                 blender.Send(MaterialJson("\"color\":{\"texture_id\":\"" + TextureId(second) +
-                    "\"},\"normal\":[]"));
+                    "\"},\"roughness\":{\"texture_id\":5}"));
                 WaitUntil(() => session.Status.Contains("Skipped material"));
                 session.SetMaterial(owner, "mesh-a", textureMaterialA);
+                Assert.That(session.GetTextureChannels("mesh-a", 0), Is.EqualTo(new[] { "color" }));
                 Assert.That(BlockTexture(0, "_MainTex"), Is.SameAs(previous));
                 Assert.That(session.IsRunning, Is.True);
                 blender.Send(MaterialJson("\"color\":null   "));

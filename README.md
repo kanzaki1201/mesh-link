@@ -131,6 +131,14 @@ Mesh Link reads the inputs of the Principled BSDF that feeds the Material Output
 
 An input that has no link sends nothing.
 Emission strength is not sent.
+In Unity, each channel appears under its material row.
+Select a shader property from the channel's drop-down list to show the map.
+The list needs a Material Map.
+Select `(unbound)` to turn the channel off for that material, and select a property again to turn it back on.
+Only linear channel rows (`normal`, `metalness`, `roughness`, and `x_*`) show the **Invert** toggle.
+The toggle needs a Material Map.
+Invert reverses the map's RGB values and keeps its alpha value.
+For `roughness`, invert is on by default when the shader has `_SmoothnessTex` and no `_RoughnessMap`, as with lilToon.
 
 ### Extra maps, such as toon masks
 
@@ -143,12 +151,9 @@ Send them with a **Mesh Link Channel** node:
 4. Press **Bake & Send Textures**.
 
 The `Shadow Mask` node sends `x_shadow_mask`.
-In Unity, the channel appears under the material row.
-Select the shader property for it in the drop-down list.
-The drop-down list needs a Material Map.
-The **Invert** toggle reverses the map's RGB values and keeps its alpha value.
-Use it when a roughness map goes into a smoothness property.
-lilToon `_SmoothnessTex` is inverted by default.
+Mesh Link trims and lowercases the node name, and replaces spaces and hyphens with `_`.
+After conversion, the name can contain only `a-z`, `0-9`, and `_`.
+A duplicate name on one material stops the bake with an error.
 
 ### Shader settings
 
@@ -187,7 +192,7 @@ Your material assets do not change.
 - The preview is not saved. Stopping sync, a lost connection, closing the scene, reloading scripts, or entering Play Mode clears it.
 - Mesh Link does not find sources automatically and does not reconnect by itself.
 - Mesh Link does not send hierarchy, cameras, lights, armatures, or modifier results.
-- Mesh Link does not send material colors, roughness, metallic, or other material values.
+- Mesh Link does not send material values such as colors and numbers; only linked inputs bake.
 - Nomad textures are not sent. Nomad roughness, metalness, and paint layers are ignored.
 - Blender vertex colors are not sent.
 - A Blender object with more than 2,000,000 vertices stops the link.

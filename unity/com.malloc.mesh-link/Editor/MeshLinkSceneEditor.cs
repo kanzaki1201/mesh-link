@@ -184,13 +184,15 @@ namespace Malloc.MeshLink
                     EditorGUI.indentLevel++;
                     EditorGUILayout.BeginHorizontal();
                     var next = EditorGUILayout.Popup(channel, selected, options);
-                    var invert = EditorGUILayout.ToggleLeft("Invert", resolved.Invert,
-                        GUILayout.Width(70));
+                    var invert = MeshLinkTextures.IsLinear(channel)
+                        ? EditorGUILayout.ToggleLeft("Invert", resolved.Invert, GUILayout.Width(70))
+                        : false;
                     EditorGUILayout.EndHorizontal();
                     EditorGUI.indentLevel--;
                     if (next != selected || invert != resolved.Invert)
                         Session.SetTextureBinding(scene, row.MeshId, row.SlotIndex,
-                            channel, next == 0 ? null : properties[next - 1], invert);
+                            channel, next == 0 ? null : properties[next - 1], invert,
+                            next != selected);
                 }
             }
         }

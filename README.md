@@ -6,6 +6,8 @@ Blender sends through the Mesh Link extension while Unity uses listen mode.
 Unity previews meshes with Unity materials that you assign.
 Preview objects and meshes are transient; material assignments are saved in a shared `MeshLinkMaterialMap` asset.
 
+This is an unofficial project. It is not affiliated with or endorsed by Nomad Sculpt or its developer.
+
 ## Requirements
 
 - Unity 6000.3 or later.

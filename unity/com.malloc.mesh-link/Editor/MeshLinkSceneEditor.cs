@@ -178,15 +178,19 @@ namespace Malloc.MeshLink
                 var properties = MeshLinkTextures.GetTextureProperties(material);
                 var resolved = Session.ResolveTextureProperty(material, channel, scene.MaterialMap);
                 var options = new[] { "(unbound)" }.Concat(properties).ToArray();
-                var selected = Array.IndexOf(properties, resolved) + 1;
+                var selected = Array.IndexOf(properties, resolved.Property) + 1;
                 using (new EditorGUI.DisabledScope(scene.MaterialMap == null || material == null))
                 {
                     EditorGUI.indentLevel++;
+                    EditorGUILayout.BeginHorizontal();
                     var next = EditorGUILayout.Popup(channel, selected, options);
+                    var invert = EditorGUILayout.ToggleLeft("Invert", resolved.Invert,
+                        GUILayout.Width(70));
+                    EditorGUILayout.EndHorizontal();
                     EditorGUI.indentLevel--;
-                    if (next != selected)
+                    if (next != selected || invert != resolved.Invert)
                         Session.SetTextureBinding(scene, row.MeshId, row.SlotIndex,
-                            channel, next == 0 ? null : properties[next - 1]);
+                            channel, next == 0 ? null : properties[next - 1], invert);
                 }
             }
         }

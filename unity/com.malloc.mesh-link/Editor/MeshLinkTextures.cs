@@ -187,11 +187,11 @@ namespace Malloc.MeshLink
                 foreach (var channel in slot.Value)
                 {
                     var state = channel.Value;
-                    var property = ResolveProperty(materials[slot.Key], channel.Key, map);
-                    if (state.Id == null || property == null) continue;
-                    var texture = Decode(state.Id, IsLinear(channel.Key));
+                    var binding = ResolveProperty(materials[slot.Key], channel.Key, map);
+                    if (state.Id == null || binding.Property == null) continue;
+                    var texture = Decode(state.Id, IsLinear(channel.Key), binding.Invert);
                     if (texture == null) continue;
-                    block.SetTexture(property, texture);
+                    block.SetTexture(binding.Property, texture);
                 }
                 // Unity ignores a block that matches the current one by value, even under another property name.
                 renderer.SetPropertyBlock(null, slot.Key);
@@ -205,30 +205,41 @@ namespace Malloc.MeshLink
                 Reapply(meshId, findRenderer(meshId), map);
         }
 
-        internal string ResolveProperty(Material material, string channel,
+        internal (string Property, bool Invert) ResolveProperty(Material material, string channel,
             MeshLinkMaterialMap map)
         {
-            if (material == null) return null;
-            if (material.shader == null) return null;
+            if (material == null || material.shader == null) return (null, false);
             var binding = map?.TextureBindings.Find(item =>
                 item.material == material && item.channel == channel);
             if (binding != null)
-                return HasTextureProperty(material.shader, binding.property) ? binding.property : null;
+                return (HasTextureProperty(material.shader, binding.property) ? binding.property : null,
+                    binding.invert);
             if (channel == "color")
+                return (ResolveColorProperty(material.shader), false);
+            if (channel == "emissive") return (FirstTextureProperty(material.shader, "_EmissionMap"), false);
+            if (channel == "normal") return (FirstTextureProperty(material.shader, "_BumpMap", "_NormalMap"), false);
+            if (channel == "metalness")
+                return (FirstTextureProperty(material.shader, "_MetallicMap", "_MetallicGlossMap"), false);
+            if (channel == "roughness")
             {
-                var shader = material.shader;
-                for (var index = 0; index < shader.GetPropertyCount(); index++)
-                    if (shader.GetPropertyType(index) == ShaderPropertyType.Texture &&
-                        (shader.GetPropertyFlags(index) & ShaderPropertyFlags.MainTexture) != 0)
-                        return shader.GetPropertyName(index);
-                return FirstTextureProperty(shader, "_MainTex", "_BaseMap");
+                var property = FirstTextureProperty(material.shader, "_RoughnessMap");
+                if (property != null) return (property, false);
+                property = FirstTextureProperty(material.shader, "_SmoothnessTex");
+                return (property, property != null);
             }
-            if (channel == "emissive") return FirstTextureProperty(material.shader, "_EmissionMap");
-            if (channel == "normal") return FirstTextureProperty(material.shader, "_BumpMap", "_NormalMap");
-            return null;
+            return (null, false);
         }
 
-        internal bool SetBinding(string meshId, int slot, string channel, string property,
+        private static string ResolveColorProperty(Shader shader)
+        {
+            for (var index = 0; index < shader.GetPropertyCount(); index++)
+                if (shader.GetPropertyType(index) == ShaderPropertyType.Texture &&
+                    (shader.GetPropertyFlags(index) & ShaderPropertyFlags.MainTexture) != 0)
+                    return shader.GetPropertyName(index);
+            return FirstTextureProperty(shader, "_MainTex", "_BaseMap");
+        }
+
+        internal bool SetBinding(string meshId, int slot, string channel, string property, bool invert,
             Func<string, Renderer> findRenderer, MeshLinkMaterialMap map)
         {
             var renderer = findRenderer(meshId);
@@ -241,15 +252,16 @@ namespace Malloc.MeshLink
             Undo.RecordObject(map, "Bind Mesh Link texture");
             var binding = map.TextureBindings.Find(item =>
                 item.material == material && item.channel == channel);
-            if (string.IsNullOrEmpty(property))
-                map.TextureBindings.Remove(binding);
-            else if (binding == null)
+            if (binding == null)
                 map.TextureBindings.Add(new TextureBindingEntry
                 {
-                    material = material, channel = channel, property = property
+                    material = material, channel = channel, property = property, invert = invert
                 });
             else
+            {
                 binding.property = property;
+                binding.invert = invert;
+            }
             EditorUtility.SetDirty(map);
             if (EditorUtility.IsPersistent(map)) AssetDatabase.SaveAssetIfDirty(map);
             foreach (var objectSlots in slots)
@@ -290,7 +302,8 @@ namespace Malloc.MeshLink
         private static bool IsSupportedChannel(string channel)
         {
             return channel == "color" || channel == "emissive" ||
-                channel == "normal" || ExtraChannel.IsMatch(channel);
+                channel == "normal" || channel == "metalness" ||
+                channel == "roughness" || ExtraChannel.IsMatch(channel);
         }
 
         private static bool IsLinear(string channel)
@@ -310,9 +323,9 @@ namespace Malloc.MeshLink
             return index >= 0 && shader.GetPropertyType(index) == ShaderPropertyType.Texture;
         }
 
-        private Texture2D Decode(string id, bool linear)
+        private Texture2D Decode(string id, bool linear, bool invert = false)
         {
-            var key = id + (linear ? ":linear" : ":srgb");
+            var key = id + (linear ? ":linear" : ":srgb") + (invert ? ":invert" : ":direct");
             if (decoded.TryGetValue(key, out var texture)) return texture;
             if (!blobs.TryGetValue(id, out var bytes)) return null;
             texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, linear)
@@ -331,6 +344,18 @@ namespace Malloc.MeshLink
                 UnityEngine.Object.DestroyImmediate(texture);
                 setStatus("Connected. Skipped texture channel: PNG decode failed.");
                 return null;
+            }
+            if (invert)
+            {
+                var pixels = texture.GetPixels32();
+                for (var index = 0; index < pixels.Length; index++)
+                {
+                    pixels[index].r = (byte)(255 - pixels[index].r);
+                    pixels[index].g = (byte)(255 - pixels[index].g);
+                    pixels[index].b = (byte)(255 - pixels[index].b);
+                }
+                texture.SetPixels32(pixels);
+                texture.Apply(true, true);
             }
             decoded.Add(key, texture);
             return texture;
@@ -366,7 +391,8 @@ namespace Malloc.MeshLink
             {
                 blobs.Remove(id);
                 referenced.Remove(id);
-                foreach (var key in new[] { id + ":linear", id + ":srgb" })
+                foreach (var key in new[] { id + ":linear:direct", id + ":srgb:direct",
+                    id + ":linear:invert", id + ":srgb:invert" })
                 {
                     if (!decoded.TryGetValue(key, out var texture)) continue;
                     UnityEngine.Object.DestroyImmediate(texture);

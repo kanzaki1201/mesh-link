@@ -409,9 +409,9 @@ namespace Malloc.MeshLink.Tests
                 var emissive = BlockTexture(1, "_EmissionMap");
                 var normal = BlockTexture(1, "_BumpMap");
                 var original = textureMaterialB.GetTexture("_MainTex");
-                Assert.That(session.ResolveTextureProperty(textureMaterialB, "color", textureMap),
+                Assert.That(session.ResolveTextureProperty(textureMaterialB, "color", textureMap).Property,
                     Is.EqualTo("_MainTex"));
-                Assert.That(session.ResolveTextureProperty(textureMaterialB, "emissive", textureMap),
+                Assert.That(session.ResolveTextureProperty(textureMaterialB, "emissive", textureMap).Property,
                     Is.EqualTo("_EmissionMap"));
                 Assert.That(color, Is.SameAs(emissive));
                 Assert.That(normal, Is.Not.SameAs(color));
@@ -419,7 +419,7 @@ namespace Malloc.MeshLink.Tests
                 Assert.That(normal.isDataSRGB, Is.False);
                 Assert.That(BlockTexture(0, "_MainTex"), Is.Null);
                 Assert.That(textureMaterialB.GetTexture("_MainTex"), Is.SameAs(original));
-                Assert.That(session.ResolveTextureProperty(textureMaterialB, "x_mask", textureMap), Is.Null);
+                Assert.That(session.ResolveTextureProperty(textureMaterialB, "x_mask", textureMap).Property, Is.Null);
 
                 Assert.That(session.SetTextureBinding(owner, "mesh-a", 1, "x_mask", "_DetailMask"), Is.True);
                 Assert.That(textureMap.TextureBindings.Single().property, Is.EqualTo("_DetailMask"));
@@ -500,12 +500,133 @@ namespace Malloc.MeshLink.Tests
                     try
                     {
                         var textures = new MeshLinkTextures(_ => { }, _ => { }, () => { });
-                        Assert.That(textures.ResolveProperty(material, item[1], null),
+                        Assert.That(textures.ResolveProperty(material, item[1], null).Property,
                             Is.EqualTo(item[2]));
                     }
                     finally { UnityEngine.Object.DestroyImmediate(material); }
                 }
                 finally { UnityEngine.Object.DestroyImmediate(shader); }
+            }
+        }
+
+        [Test]
+        public void MetallicAndRoughnessDefaultsCarryTheirInvertValues()
+        {
+            var cases = new[]
+            {
+                new { Properties = "_RoughnessMap(\"Roughness\", 2D) = \"white\" {} _SmoothnessTex(\"Smoothness\", 2D) = \"white\" {}", Channel = "roughness", Property = "_RoughnessMap", Invert = false },
+                new { Properties = "_SmoothnessTex(\"Smoothness\", 2D) = \"white\" {}", Channel = "roughness", Property = "_SmoothnessTex", Invert = true },
+                new { Properties = "_MetallicMap(\"Metallic\", 2D) = \"white\" {} _MetallicGlossMap(\"Gloss\", 2D) = \"white\" {}", Channel = "metalness", Property = "_MetallicMap", Invert = false },
+                new { Properties = "_MetallicGlossMap(\"Gloss\", 2D) = \"white\" {}", Channel = "metalness", Property = "_MetallicGlossMap", Invert = false }
+            };
+            foreach (var item in cases)
+            {
+                var shader = ShaderUtil.CreateShaderAsset("Shader \"Hidden/MeshLinkTextureDefaults\" { Properties { " +
+                    item.Properties + " } SubShader { Pass {} } }");
+                Assert.That(shader, Is.Not.Null);
+                var material = new Material(shader);
+                try
+                {
+                    var binding = new MeshLinkTextures(_ => { }, _ => { }, () => { })
+                        .ResolveProperty(material, item.Channel, null);
+                    Assert.That(binding.Property, Is.EqualTo(item.Property));
+                    Assert.That(binding.Invert, Is.EqualTo(item.Invert));
+                }
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(material);
+                    UnityEngine.Object.DestroyImmediate(shader);
+                }
+            }
+        }
+
+        [Test]
+        public void InvertedTextureKeepsAlphaAndCachesSeparately()
+        {
+            StartPairedTexturePreview(out var blender);
+            using (blender)
+            {
+                textureMap = ScriptableObject.CreateInstance<MeshLinkMaterialMap>();
+                owner.MaterialMap = textureMap;
+                textureMaterialB = new Material(Shader.Find("Standard"));
+                session.SetMaterial(owner, "mesh-a", textureMaterialB);
+                var png = Png(new Color(0.25f, 0.5f, 0.75f, 0.375f));
+                var id = TextureId(png);
+                blender.Send(TextureJson(id, png), png);
+                blender.Send(MaterialJson("\"metalness\":{\"texture_id\":\"" + id +
+                    "\"},\"roughness\":{\"texture_id\":\"" + id + "\"}"));
+                WaitUntil(() => BlockTexture(0, "_MetallicGlossMap") != null);
+                Assert.That(session.SetTextureBinding(owner, "mesh-a", 0, "roughness", "_DetailMask", true),
+                    Is.True);
+                var direct = BlockTexture(0, "_MetallicGlossMap");
+                var inverted = BlockTexture(0, "_DetailMask");
+                Assert.That(inverted, Is.Not.Null.And.Not.SameAs(direct));
+                Assert.That(direct.isDataSRGB, Is.False);
+                Assert.That(inverted.isDataSRGB, Is.False);
+                Assert.That(session.DecodedTextureCount, Is.EqualTo(2));
+                var sourcePixel = ReadBack(direct);
+                var invertedPixel = ReadBack(inverted);
+                Assert.That(invertedPixel.r, Is.EqualTo(255 - sourcePixel.r).Within(2));
+                Assert.That(invertedPixel.g, Is.EqualTo(255 - sourcePixel.g).Within(2));
+                Assert.That(invertedPixel.b, Is.EqualTo(255 - sourcePixel.b).Within(2));
+                Assert.That(invertedPixel.a, Is.EqualTo(sourcePixel.a).Within(2));
+                session.StopForTests();
+                Assert.That(direct == null, Is.True);
+                Assert.That(inverted == null, Is.True);
+                Assert.That(session.DecodedTextureCount, Is.Zero);
+            }
+        }
+
+        [Test]
+        public void UndoInvertBindingRestoresPreviousBlockTexture()
+        {
+            StartPairedTexturePreview(out var blender);
+            using (blender)
+            {
+                textureMap = ScriptableObject.CreateInstance<MeshLinkMaterialMap>();
+                owner.MaterialMap = textureMap;
+                textureMaterialB = new Material(Shader.Find("Standard"));
+                session.SetMaterial(owner, "mesh-a", textureMaterialB);
+                var png = Png(Color.red);
+                var id = TextureId(png);
+                blender.Send(TextureJson(id, png), png);
+                blender.Send(MaterialJson("\"normal\":{\"texture_id\":\"" + id + "\"}"));
+                WaitUntil(() => BlockTexture(0, "_BumpMap") != null);
+                var direct = BlockTexture(0, "_BumpMap");
+                Assert.That(session.SetTextureBinding(owner, "mesh-a", 0, "normal", "_BumpMap"),
+                    Is.True);
+                Undo.FlushUndoRecordObjects();
+                Undo.IncrementCurrentGroup();
+                Assert.That(session.SetTextureBinding(owner, "mesh-a", 0, "normal", "_BumpMap", true),
+                    Is.True);
+                Undo.FlushUndoRecordObjects();
+                Assert.That(textureMap.TextureBindings.Single().invert, Is.True);
+                Assert.That(BlockTexture(0, "_BumpMap"), Is.Not.SameAs(direct));
+                Undo.PerformUndo();
+                Assert.That(textureMap.TextureBindings.Single().invert, Is.False);
+                Assert.That(BlockTexture(0, "_BumpMap"), Is.SameAs(direct));
+            }
+        }
+
+        private static Color32 ReadBack(Texture texture)
+        {
+            var render = RenderTexture.GetTemporary(2, 2, 0, RenderTextureFormat.ARGB32,
+                RenderTextureReadWrite.Linear);
+            var previous = RenderTexture.active;
+            var pixels = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);
+            try
+            {
+                Graphics.Blit(texture, render);
+                RenderTexture.active = render;
+                pixels.ReadPixels(new Rect(0, 0, 2, 2), 0, 0);
+                pixels.Apply();
+                return pixels.GetPixels32()[0];
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                RenderTexture.ReleaseTemporary(render);
+                UnityEngine.Object.DestroyImmediate(pixels);
             }
         }
 

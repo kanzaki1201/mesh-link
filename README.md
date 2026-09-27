@@ -126,6 +126,8 @@ Mesh Link reads the inputs of the Principled BSDF that feeds the Material Output
 | Base Color | `color` | The shader's main texture, else `_MainTex`, else `_BaseMap` |
 | Emission Color | `emissive` | `_EmissionMap` |
 | Normal | `normal` | `_BumpMap`, else `_NormalMap` |
+| Metallic | `metalness` | `_MetallicMap`, else `_MetallicGlossMap` |
+| Roughness | `roughness` | `_RoughnessMap`, else `_SmoothnessTex` with invert |
 
 An input that has no link sends nothing.
 Emission strength is not sent.
@@ -135,16 +137,18 @@ Emission strength is not sent.
 Toon shaders use extra maps, for example shadow or rim masks.
 Send them with a **Mesh Link Channel** node:
 
-1. Press **Bake & Send Textures** once. This creates the **Mesh Link Channel** node group.
-2. In the Shader Editor, add **Add > Group > Mesh Link Channel**.
-3. Connect your mask to its **Color** input.
-4. Set the node label (sidebar **Node > Label**) to a name with lowercase letters, digits, and underscores, for example `shadow`.
-5. Press **Bake & Send Textures**.
+1. In the Shader Editor, add **Shift+A > Mesh Link > Mesh Link Channel**.
+2. Connect your mask to its **Color** input.
+3. Type `Shadow Mask` as the name on the node.
+4. Press **Bake & Send Textures**.
 
-The node sends a channel named `x_` plus the label, for example `x_shadow`.
+The `Shadow Mask` node sends `x_shadow_mask`.
 In Unity, the channel appears under the material row.
 Select the shader property for it in the drop-down list.
 The drop-down list needs a Material Map.
+The **Invert** toggle reverses the map's RGB values and keeps its alpha value.
+Use it when a roughness map goes into a smoothness property.
+lilToon `_SmoothnessTex` is inverted by default.
 
 ### Shader settings
 
@@ -159,6 +163,8 @@ Turn on the feature on the material before you preview a map for it.
 
 MK Toon and URP Lit enable a map only when their Inspector receives a texture, so a placeholder texture is necessary.
 The URP Lit emission color multiplies the map, and its default is black.
+URP Lit packs smoothness into the alpha of `_MetallicGlossMap`.
+Mesh Link does not fill that alpha.
 
 Preview textures are temporary.
 Mesh Link removes them when sync stops.

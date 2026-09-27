@@ -20,6 +20,7 @@ namespace Malloc.MeshLink
         public Material material;
         public string channel;
         public string property;
+        public bool invert;
     }
 
     public sealed class MeshLinkMaterialMap : ScriptableObject

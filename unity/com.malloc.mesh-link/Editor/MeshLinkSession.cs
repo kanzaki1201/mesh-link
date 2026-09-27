@@ -235,16 +235,17 @@ namespace Malloc.MeshLink
             return textures.GetChannels(meshId, slot);
         }
 
-        internal string ResolveTextureProperty(Material material, string channel, MeshLinkMaterialMap map)
+        internal (string Property, bool Invert) ResolveTextureProperty(Material material, string channel,
+            MeshLinkMaterialMap map)
         {
             return textures.ResolveProperty(material, channel, map);
         }
 
         internal bool SetTextureBinding(MeshLinkScene scene, string meshId, int slot,
-            string channel, string property)
+            string channel, string property, bool invert = false)
         {
             return running && owner == scene &&
-                textures.SetBinding(meshId, slot, channel, property,
+                textures.SetBinding(meshId, slot, channel, property, invert,
                     FindRenderer, scene.MaterialMap);
         }
 

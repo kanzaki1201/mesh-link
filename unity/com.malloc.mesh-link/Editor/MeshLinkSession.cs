@@ -256,7 +256,8 @@ namespace Malloc.MeshLink
         private void ReapplyMaterials(ObjectEntry entry, MeshLinkFaceMaterials group, string objectName)
         {
             var materials = entry.Renderer.sharedMaterials;
-            var entries = owner.MaterialMap?.Entries;
+            var map = owner.MaterialMap;
+            var entries = map != null ? map.Entries : null;
             for (var slot = 0; slot < materials.Length; slot++)
             {
                 var slotName = group.Names == null ? objectName : group.Names[slot];

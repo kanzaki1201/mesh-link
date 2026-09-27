@@ -517,8 +517,10 @@ namespace Malloc.MeshLink.Tests
                 peer.Send(FaceMaterialJson(), FaceMaterialBinary());
                 WaitUntil(() => session.ObjectCount == 1);
                 Assert.That(session.SetMaterial(owner, "mesh-a", materialA, 1), Is.True);
+                Undo.FlushUndoRecordObjects();
                 Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialA));
-                Assert.That(materialMap.Entries, Is.Empty);
+                Assert.That(scene.isDirty, Is.False);
+                Assert.That(EditorUtility.IsDirty(owner), Is.False);
             }
         }
 
@@ -622,6 +624,7 @@ namespace Malloc.MeshLink.Tests
                     peer.Send(FaceMaterialJson(), FaceMaterialBinary());
                     WaitUntil(() => session.ObjectCount == 1);
                     session.SetMaterial(owner, "mesh-a", asset, 1);
+                    Assert.That(EditorUtility.IsDirty(materialMap), Is.False);
                     Assert.That(AssetDatabase.DeleteAsset(path), Is.True);
                     peer.Send(ObjectDeleteJson("mesh-a", false));
                     WaitUntil(() => session.ObjectCount == 0);

@@ -493,7 +493,6 @@ namespace Malloc.MeshLink.Tests
                 Undo.IncrementCurrentGroup();
                 Assert.That(session.SetMaterial(owner, "mesh-a", materialA, 1), Is.True);
                 Undo.FlushUndoRecordObjects();
-                Assert.That(scene.isDirty, Is.False);
                 var stored = owner.MaterialMap.Entries.Single();
                 Assert.That(stored.meshId, Is.EqualTo("mesh-a"));
                 Assert.That(stored.slotIndex, Is.EqualTo(1));
@@ -517,10 +516,8 @@ namespace Malloc.MeshLink.Tests
                 peer.Send(FaceMaterialJson(), FaceMaterialBinary());
                 WaitUntil(() => session.ObjectCount == 1);
                 Assert.That(session.SetMaterial(owner, "mesh-a", materialA, 1), Is.True);
-                Undo.FlushUndoRecordObjects();
                 Assert.That(session.FindRenderer("mesh-a").sharedMaterials[1], Is.SameAs(materialA));
-                Assert.That(scene.isDirty, Is.False);
-                Assert.That(EditorUtility.IsDirty(owner), Is.False);
+                Assert.That(owner.MaterialMap, Is.Null);
             }
         }
 

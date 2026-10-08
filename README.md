@@ -110,7 +110,9 @@ It works with plain image textures, baked maps, and layered painting add-ons suc
 4. In the Mesh Link sidebar, press **Bake & Send Textures**.
 5. Unity shows the baked maps on the preview.
 
-Press the button again after more painting.
+Select **Auto Bake** under the button to send changed texture channels after a two-second paint pause.
+The checkbox sends nothing when you turn it on.
+Press **Bake & Send Textures** to send a full set at any time.
 
 Mesh Link bakes each material slot of each visible object with Cycles, on the active UV map.
 Blender waits until the bake ends.

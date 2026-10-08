@@ -108,8 +108,73 @@ def make_material(name, image):
     return material
 
 
+def nested_group_source(image):
+    inner = bpy.data.node_groups.new('Smoke Inner', 'ShaderNodeTree')
+    outer = bpy.data.node_groups.new('Smoke Outer', 'ShaderNodeTree')
+    for group in (inner, outer):
+        group.interface.new_socket(name='Color', in_out='INPUT', socket_type='NodeSocketColor')
+        group.interface.new_socket(name='Color', in_out='OUTPUT', socket_type='NodeSocketColor')
+    inner_input = inner.nodes.new('NodeGroupInput')
+    inner_output = inner.nodes.new('NodeGroupOutput')
+    reroute = inner.nodes.new('NodeReroute')
+    inner.links.new(inner_input.outputs['Color'], reroute.inputs[0])
+    inner.links.new(reroute.outputs[0], inner_output.inputs['Color'])
+    outer_input = outer.nodes.new('NodeGroupInput')
+    outer_output = outer.nodes.new('NodeGroupOutput')
+    nested = outer.nodes.new('ShaderNodeGroup')
+    nested.node_tree = inner
+    outer.links.new(outer_input.outputs['Color'], nested.inputs['Color'])
+    outer.links.new(nested.outputs['Color'], outer_output.inputs['Color'])
+    material = make_material('Smoke Nested Paint', image)
+    tree = material.node_tree
+    image_node = next(node for node in tree.nodes if node.type == 'TEX_IMAGE')
+    shader = tree.nodes.get('Principled BSDF')
+    group_node = tree.nodes.new('ShaderNodeGroup')
+    group_node.node_tree = outer
+    upstream = tree.links.new(image_node.outputs['Color'], group_node.inputs['Color'])
+    tree.links.new(group_node.outputs['Color'], shader.inputs['Base Color'])
+    return material, upstream
+
+
+def assert_nested_group_walk(bake, image):
+    material, link = nested_group_source(image)
+    source = next(entry[2] for entry in bake.channels(material) if entry[0] == 'color')
+    assert bake.source_images(material.node_tree, source) == {image}
+    link.is_muted = True
+    assert bake.source_images(material.node_tree, source) == set()
+
+
+def bake_and_check_updates(bake, objects):
+    updates = []
+
+    def record(_scene, depsgraph):
+        updates.extend(update.id.original for update in depsgraph.updates
+                       if isinstance(update.id.original, (bpy.types.Image, bpy.types.Material)))
+
+    bpy.app.handlers.depsgraph_update_post.append(record)
+    try:
+        result = bake.bake_objects(objects, 64)
+        updates.clear()
+        bpy.context.view_layer.update()
+        assert not updates
+        return result
+    finally:
+        bpy.app.handlers.depsgraph_update_post.remove(record)
+
+
+def assert_paint_mode_bake(bake, obj, material):
+    second = make_object('Smoke Paint Second', [(-1, 1)])
+    second.data.materials.append(material)
+    assert bpy.ops.object.mode_set(mode='TEXTURE_PAINT') == {'FINISHED'}
+    result = bake.bake_objects([('paint', obj), ('second', second)], 64,
+                               {material.as_pointer(): {'color'}})
+    assert {slot[0] for slot in result} == {'paint', 'second'}
+    assert obj.mode == 'TEXTURE_PAINT'
+    assert bpy.ops.object.mode_set(mode='OBJECT') == {'FINISHED'}
+
+
 def assert_bakes(result, color_a, red, blue):
-    textures = {(mesh_id, slot): channels for mesh_id, slot, _, channels in result}
+    textures = {(mesh_id, slot): channels for mesh_id, slot, _, channels, _ in result}
     assert not any(mesh_id == 'hidden' for mesh_id, *_ in result)
     assert textures[('a', 0)].keys() == {
         'normal', 'color', 'metalness', 'roughness', 'x_shadow_mask'}
@@ -139,6 +204,7 @@ def main():
     material_a = make_material('Smoke Paint', color_a)
     material_red = make_material('Smoke Red Paint', red)
     material_blue = make_material('Smoke Blue Paint', blue)
+    assert_nested_group_walk(bake, color_a)
     material_unlinked = bpy.data.materials.new('Smoke Unlinked Paint')
     material_unlinked.use_nodes = True
     unlinked_tree = material_unlinked.node_tree
@@ -185,6 +251,7 @@ def main():
     scene = bpy.context.scene
     old_engine = scene.render.engine
     old_samples = scene.cycles.samples
+    old_device = scene.cycles.device
     old_bake = {name: getattr(scene.render.bake, name) for name in (
         'target', 'normal_space', 'normal_r', 'normal_g', 'normal_b',
         'use_selected_to_active', 'use_clear')}
@@ -200,13 +267,14 @@ def main():
     old_slots = [[slot.material for slot in obj.material_slots] for obj in objects]
     old_paint = {material.name: material.paint_active_slot for material in materials}
     bpy.ops.object.mode_set(mode='EDIT')
-    result = bake.bake_objects([('a', obj_a), ('b', obj_b),
-                                ('unlinked', obj_unlinked), ('hidden', obj_hidden)], 64)
+    result = bake_and_check_updates(bake, [('a', obj_a), ('b', obj_b),
+                                           ('unlinked', obj_unlinked), ('hidden', obj_hidden)])
     assert_bakes(result, color_a, red, blue)
 
     def assert_restored():
         assert scene.render.engine == old_engine
         assert scene.cycles.samples == old_samples
+        assert scene.cycles.device == old_device
         assert all(getattr(scene.render.bake, name) == value for name, value in old_bake.items())
         assert obj_a.mode == 'EDIT'
         assert bpy.context.view_layer.objects.active == obj_a
@@ -281,7 +349,7 @@ def main():
 
     def send_bakes(slots):
         sent.extend(slots)
-        return sum(len(channels) for _, _, _, channels in slots)
+        return sum(len(slot[3]) for slot in slots)
 
     handlers._session = types.SimpleNamespace(
         running=True, ready=True, capabilities={'material', 'texture'},
@@ -299,6 +367,7 @@ def main():
     bpy.ops.object.select_all(action='DESELECT')
     obj_flag.select_set(True)
     bpy.context.view_layer.objects.active = obj_flag
+    assert_paint_mode_bake(bake, obj_flag, material_flag)
     scene.render.engine = 'CYCLES'
     scene.render.bake.target = 'IMAGE_TEXTURES'
     assert bpy.ops.object.bake(type='EMIT') == {'FINISHED'}

@@ -26,18 +26,23 @@ def _slot_textures(material_name, channels):
     return textures, references, source
 
 
-def _bake_messages(slots, old_slots):
+def _bake_messages(slots, old_slots, auto=False):
     messages = []
     new_slots = dict(old_slots)
     blobs = {}
     counts = Counter(texture_id for references in old_slots.values()
                      for texture_id, _ in references.values())
-    for mesh_id, slot_index, material_name, channels in slots:
+    for slot in slots:
+        mesh_id, slot_index, material_name, channels = slot[:4]
+        current = set(slot[4]) if len(slot) == 5 else set(channels)
         key = (mesh_id, slot_index)
         previous = old_slots.get(key, {})
         textures, references, source = _slot_textures(material_name, channels)
-        for channel in previous.keys() - references.keys():
+        for channel in previous.keys() - current:
             textures[channel] = {}
+        references = {**previous, **references}
+        for channel in previous.keys() - current:
+            del references[channel]
         for texture_id, (name, data) in source.items():
             if counts[texture_id] == 0:
                 blobs[texture_id] = (name, data)
@@ -46,10 +51,11 @@ def _bake_messages(slots, old_slots):
                     "name": name, "binary_size": len(data),
                 }, data))
         new_slots[key] = references
-        messages.append(({
-            "type": "material", "mesh_id": mesh_id, "slot_index": slot_index,
-            "live_sync": False, "material": {"textures": textures},
-        }, b""))
+        if textures or not auto:
+            messages.append(({
+                "type": "material", "mesh_id": mesh_id, "slot_index": slot_index,
+                "live_sync": False, "material": {"textures": textures},
+            }, b""))
         counts.subtract(texture_id for texture_id, _ in previous.values())
         counts.update(texture_id for texture_id, _ in references.values())
     return messages, new_slots, blobs
@@ -107,13 +113,13 @@ class Session:
                           for references in self._slots.values()
                           for texture_id, _ in references.values()}
 
-    def send_bakes(self, slots):
+    def send_bakes(self, slots, auto=False):
         if self.transport._stop.is_set():
             self.drain()
             raise ValueError(self.status if self.status != 'Connected' else 'Listener disconnected')
         if not self.ready or not self.running or not {'material', 'texture'} <= self.capabilities:
             raise ValueError("Listener does not support material and texture")
-        messages, new_slots, blobs = _bake_messages(slots, self._slots)
+        messages, new_slots, blobs = _bake_messages(slots, self._slots, auto)
         if not self.transport.send_batch(messages):
             if self.transport._stop.is_set():
                 self.drain()
@@ -124,7 +130,7 @@ class Session:
         self._textures = {texture_id: available[texture_id]
                           for references in new_slots.values()
                           for texture_id, _ in references.values()}
-        return sum(len(channels) for _, _, _, channels in slots)
+        return sum(len(slot[3]) for slot in slots)
 
     def drain(self):
         for header, _payload in self.transport.poll():

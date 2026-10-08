@@ -5,6 +5,8 @@ import bpy
 
 from .session import channel_key
 
+baking = False
+
 
 def render_enabled(obj, view_layer):
     if not obj.visible_get(view_layer=view_layer) or obj.hide_render:
@@ -79,6 +81,55 @@ def channels(material):
     return result + extra
 
 
+def _linked_source(tree, socket, stack):
+    link = _active_link(socket)
+    return [(tree, link.from_socket, stack)] if link is not None else []
+
+
+def _source_inputs(tree, socket, stack):
+    node = socket.node
+    if node.type == 'GROUP':
+        inner = node.node_tree
+        if inner is None:
+            return []
+        output = next((item for item in inner.nodes
+                       if item.type == 'GROUP_OUTPUT' and item.is_active_output), None)
+        if output is None:
+            return []
+        entry = next((item for item in output.inputs
+                      if item.identifier == socket.identifier), None)
+        return _linked_source(inner, entry, stack + ((node, tree),))
+    if node.type == 'GROUP_INPUT':
+        if not stack:
+            return []
+        group, parent = stack[-1]
+        entry = next((item for item in group.inputs
+                      if item.identifier == socket.identifier), None)
+        return _linked_source(parent, entry, stack[:-1])
+    return [state for entry in node.inputs for state in _linked_source(tree, entry, stack)]
+
+
+def source_images(tree, source):
+    """Find images upstream of a channel source socket."""
+    images = set()
+    pending = [(tree, source, ())]
+    seen = set()
+    while pending:
+        tree, socket, stack = pending.pop()
+        node = socket.node
+        key = (tree.as_pointer(), node.as_pointer(), socket.identifier, len(stack),
+               tuple(group.as_pointer() for group, _ in stack))
+        if key in seen:
+            continue
+        seen.add(key)
+        if node.type == 'TEX_IMAGE':
+            if node.image is not None:
+                images.add(node.image)
+        else:
+            pending.extend(_source_inputs(tree, socket, stack))
+    return images
+
+
 def _png(image):
     fd, path = tempfile.mkstemp(suffix='.png', dir=bpy.app.tempdir)
     os.close(fd)
@@ -111,7 +162,7 @@ def _bake_channel(obj, material, channel, bake_type, source, output, size):
             emission = tree.nodes.new('ShaderNodeEmission')
             tree.links.new(source, emission.inputs['Color'])
             tree.links.new(emission.outputs['Emission'], surface)
-        if bpy.ops.object.bake(type=bake_type) != {'FINISHED'}:
+        if bpy.ops.object.bake('EXEC_DEFAULT', False, type=bake_type) != {'FINISHED'}:
             raise RuntimeError(f"{obj.name}: {material.name}: {channel} bake did not finish")
         return _png(image)
     finally:
@@ -125,8 +176,9 @@ def _bake_channel(obj, material, channel, bake_type, source, output, size):
         bpy.data.images.remove(image)
 
 
-def _bake_slot(obj, material, size):
-    sources = channels(material)
+def _bake_slot(obj, material, size, selected=None):
+    sources = [entry for entry in channels(material)
+               if selected is None or entry[0] in selected]
     if not sources:
         return {}
     if obj.data.uv_layers.active is None:
@@ -167,7 +219,23 @@ def _isolate_slot(obj, original, material, sink):
         slot.material = material if original[index] == material else sink['material']
 
 
-def _bake_object(mesh_id, obj, size):
+def _bake_material(obj, original, material, size, selected, sink):
+    _isolate_slot(obj, original, material, sink)
+    if selected is None:
+        return _bake_slot(obj, material, size)
+    return _bake_slot(obj, material, size, selected)
+
+
+def _restore_slots(obj, original, sink):
+    for slot, material in zip(obj.material_slots, original):
+        slot.material = material
+    if 'material' in sink:
+        bpy.data.materials.remove(sink['material'])
+    if 'image' in sink:
+        bpy.data.images.remove(sink['image'])
+
+
+def _bake_object(mesh_id, obj, size, selected=None):
     result = []
     original = [slot.material for slot in obj.material_slots]
     names = [slot.name for slot in obj.material_slots]
@@ -175,44 +243,70 @@ def _bake_object(mesh_id, obj, size):
     try:
         baked = {}
         for slot_index, material in enumerate(original):
-            if material is not None and material.as_pointer() not in baked:
-                _isolate_slot(obj, original, material, sink)
-                baked[material.as_pointer()] = _bake_slot(obj, material, size)
+            pointer = material.as_pointer() if material else None
+            if selected is not None and pointer not in selected:
+                continue
+            if material is not None and pointer not in baked:
+                keys = selected[pointer] if selected is not None else None
+                baked[pointer] = _bake_material(obj, original, material, size, keys, sink)
             result.append((mesh_id, slot_index,
                            material.name if material else names[slot_index],
-                           baked[material.as_pointer()] if material else {}))
+                           baked[pointer] if material else {},
+                           {entry[0] for entry in channels(material)}))
     finally:
-        for slot, material in zip(obj.material_slots, original):
-            slot.material = material
-        if 'material' in sink:
-            bpy.data.materials.remove(sink['material'])
-        if 'image' in sink:
-            bpy.data.images.remove(sink['image'])
+        _restore_slots(obj, original, sink)
     return result
 
 
-def _restore_context(scene, settings, engine, samples, selected, active, mode, object_mode):
+def _clear_selection(mode):
+    if mode == 'TEXTURE_PAINT':
+        for obj in bpy.context.selected_objects:
+            obj.select_set(False)
+    else:
+        bpy.ops.object.select_all('EXEC_DEFAULT', False, action='DESELECT')
+
+
+def _restore_context(scene, settings, engine, samples, device, selected, active, mode, object_mode):
     bake = scene.render.bake
     for name, value in settings.items():
         setattr(bake, name, value)
     scene.cycles.samples = samples
+    scene.cycles.device = device
     scene.render.engine = engine
     if object_mode:
-        bpy.ops.object.select_all(action='DESELECT')
+        _clear_selection(mode)
         for obj in selected:
             obj.select_set(True)
     bpy.context.view_layer.objects.active = active
-    if active and mode != 'OBJECT' and object_mode:
-        bpy.ops.object.mode_set(mode=mode)
+    if active and mode not in {'OBJECT', 'TEXTURE_PAINT'} and object_mode:
+        bpy.ops.object.mode_set('EXEC_DEFAULT', False, mode=mode)
 
 
-def bake_objects(objects, size):
+def bake_objects(objects, size, selected=None):
+    global baking
+    baking = True
+    try:
+        return _bake_objects(objects, size, selected)
+    finally:
+        try:
+            bpy.context.view_layer.update()
+        finally:
+            baking = False
+
+
+def _validate_channels(objects, channel_filter):
+    for _, obj in objects:
+        for slot in obj.material_slots:
+            material = slot.material
+            if channel_filter is None or (material and material.as_pointer() in channel_filter):
+                channels(material)
+
+
+def _bake_objects(objects, size, channel_filter):
     scene = bpy.context.scene
     view_layer = bpy.context.view_layer
     visible = [(mesh_id, obj) for mesh_id, obj in objects if render_enabled(obj, view_layer)]
-    for _, obj in visible:
-        for slot in obj.material_slots:
-            channels(slot.material)
+    _validate_channels(visible, channel_filter)
     active = view_layer.objects.active
     selected = tuple(bpy.context.selected_objects)
     mode = active.mode if active else 'OBJECT'
@@ -222,28 +316,30 @@ def bake_objects(objects, size):
         'use_selected_to_active', 'use_clear')}
     engine = scene.render.engine
     samples = scene.cycles.samples
+    device = scene.cycles.device
     result = []
-    object_mode = mode == 'OBJECT'
+    object_mode = mode in {'OBJECT', 'TEXTURE_PAINT'}
     try:
-        if active and active.mode != 'OBJECT':
-            if bpy.ops.object.mode_set(mode='OBJECT') != {'FINISHED'}:
+        if active and not object_mode:
+            if bpy.ops.object.mode_set('EXEC_DEFAULT', False, mode='OBJECT') != {'FINISHED'}:
                 raise RuntimeError("Could not enter Object Mode for texture bake")
             object_mode = True
         scene.render.engine = 'CYCLES'
         scene.cycles.samples = 1
+        scene.cycles.device = 'CPU'
         bake.target = 'IMAGE_TEXTURES'
         bake.normal_space = 'TANGENT'
         bake.normal_r, bake.normal_g, bake.normal_b = 'POS_X', 'POS_Y', 'POS_Z'
         bake.use_selected_to_active = False
         bake.use_clear = True
-        bpy.ops.object.select_all(action='DESELECT')
+        _clear_selection(mode)
         for mesh_id, obj in visible:
             obj.select_set(True)
             view_layer.objects.active = obj
             try:
-                result.extend(_bake_object(mesh_id, obj, size))
+                result.extend(_bake_object(mesh_id, obj, size, channel_filter))
             finally:
                 obj.select_set(False)
     finally:
-        _restore_context(scene, settings, engine, samples, selected, active, mode, object_mode)
+        _restore_context(scene, settings, engine, samples, device, selected, active, mode, object_mode)
     return result

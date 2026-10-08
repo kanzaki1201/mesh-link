@@ -28,6 +28,9 @@ def register():
         name="Host", default="127.0.0.1")
     bpy.types.Scene.mesh_link_port = bpy.props.IntProperty(
         name="Port", default=48312, min=1, max=65535)
+    bpy.types.Scene.mesh_link_auto_bake = bpy.props.BoolProperty(
+        name="Auto Bake", default=False,
+        update=lambda _scene, _context: handlers.clear_texture_dirt())
     handlers.register()
 
 
@@ -37,6 +40,7 @@ def unregister():
 
     handlers.unregister()
     channel_node.unregister()
+    del bpy.types.Scene.mesh_link_auto_bake
     del bpy.types.Scene.mesh_link_port
     del bpy.types.Scene.mesh_link_host
     for cls in reversed(CLASSES):

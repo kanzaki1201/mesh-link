@@ -54,6 +54,9 @@ class MESHLINK_PT_panel(bpy.types.Panel):
         action = "disconnect" if handlers.running() else "connect"
         layout.operator("mesh_link." + action)
         layout.operator("mesh_link.bake_textures")
+        auto = layout.row()
+        auto.enabled = handlers.can_bake()
+        auto.prop(context.scene, "mesh_link_auto_bake")
         layout.label(text=handlers.status())
 
 

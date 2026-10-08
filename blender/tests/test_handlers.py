@@ -352,3 +352,100 @@ def test_bake_skips_hidden_sent_objects_and_counts_them(handlers, monkeypatch):
     handlers.bake_and_send(context)
     assert received == [('a', visible)]
     assert handlers._session.status == 'Sent 1 textures, skipped 4 hidden objects'
+
+
+def test_auto_bake_waits_for_pause_and_keeps_link_on_error(handlers, monkeypatch):
+    from mesh_link import bake
+
+    material = types.SimpleNamespace(as_pointer=lambda: 7)
+    obj = types.SimpleNamespace(material_slots=[types.SimpleNamespace(material=material)])
+    scene = types.SimpleNamespace(mesh_link_auto_bake=True)
+    window = types.SimpleNamespace(modal_operators=['stroke'])
+    context = types.SimpleNamespace(
+        scene=scene, view_layer=object(),
+        window_manager=types.SimpleNamespace(windows=[window]),
+        preferences=types.SimpleNamespace(addons={'mesh_link': types.SimpleNamespace(
+            preferences=types.SimpleNamespace(texture_size='512'))}))
+    session = types.SimpleNamespace(running=True, ready=True, status='Connected',
+                                    capabilities={'material', 'texture'})
+    handlers._session = session
+    monkeypatch.setattr(handlers, '_sent_objects', lambda _view: [('mesh', obj)])
+    monkeypatch.setattr(handlers, '_texture_filter', lambda *_args: {7: {'color'}})
+    monkeypatch.setattr(bake, 'render_enabled', lambda *_args: True)
+    calls = []
+
+    def bake_objects(objects, size, selected):
+        assert not handlers._dirty_images and not handlers._dirty_materials
+        calls.append((objects, size, selected))
+        return [('mesh', 0, 'Paint', {'color': b'png'}, {'color'})]
+
+    monkeypatch.setattr(bake, 'bake_objects', bake_objects)
+    session.send_bakes = lambda slots, auto: len(slots[0][3])
+    monkeypatch.setattr(handlers.time, 'monotonic', lambda: 10.0)
+    handlers._dirty_images.add(2)
+    handlers._texture_changed_at = 9.0
+    handlers._auto_bake(context)
+    assert not calls
+    handlers._texture_changed_at = 7.0
+    handlers._auto_bake(context)
+    assert not calls
+    window.modal_operators.clear()
+    handlers._auto_bake(context)
+    assert calls == [([('mesh', obj)], 512, {7: {'color'}})]
+    assert session.status == 'Auto baked 1 textures'
+    handlers._dirty_materials.add(7)
+    session.send_bakes = lambda _slots, auto: (_ for _ in ()).throw(ValueError('queue limit'))
+    handlers._auto_bake(context)
+    assert not scene.mesh_link_auto_bake
+    assert session.status == 'queue limit' and session.running
+
+
+def test_image_dirt_selects_reachable_channel_before_material_dirt(handlers, monkeypatch):
+    from mesh_link import bake
+
+    image = types.SimpleNamespace(as_pointer=lambda: 1)
+    paint = types.SimpleNamespace(as_pointer=lambda: 2, node_tree='paint')
+    settings = types.SimpleNamespace(as_pointer=lambda: 3, node_tree='settings')
+    slots = [types.SimpleNamespace(material=material) for material in (paint, settings)]
+    objects = [('mesh', types.SimpleNamespace(material_slots=slots))]
+
+    def channels(material):
+        return [('color', 'EMIT', (material.node_tree, 'color'), None),
+                ('roughness', 'EMIT', (material.node_tree, 'roughness'), None)]
+
+    monkeypatch.setattr(bake, 'channels', channels)
+    monkeypatch.setattr(bake, 'source_images',
+                        lambda _tree, source: [image] if source == ('paint', 'color') else [])
+    assert handlers._texture_filter(objects, {1}, {3}) == {2: {'color'}}
+    assert handlers._texture_filter(objects, set(), {3}) == {3: {'color', 'roughness'}}
+
+
+def test_texture_dirt_ignores_bake_updates(handlers, monkeypatch):
+    from mesh_link import bake
+
+    class Image:
+        original = property(lambda self: self)
+
+        def as_pointer(self):
+            return 1
+
+    class Material:
+        original = property(lambda self: self)
+
+        def as_pointer(self):
+            return 2
+
+    handlers.bpy.types = types.SimpleNamespace(Image=Image, Material=Material)
+    monkeypatch.setattr(handlers.time, 'monotonic', lambda: 5.0)
+    scene = types.SimpleNamespace(mesh_link_auto_bake=True)
+    updates = types.SimpleNamespace(updates=[types.SimpleNamespace(id=Image()),
+                                             types.SimpleNamespace(id=Material())])
+    handlers.clear_texture_dirt()
+    monkeypatch.setattr(bake, 'baking', False)
+    handlers._collect_texture_dirt(scene, updates)
+    assert handlers._dirty_images == {1} and handlers._dirty_materials == {2}
+    assert handlers._texture_changed_at == 5.0
+    handlers.clear_texture_dirt()
+    monkeypatch.setattr(bake, 'baking', True)
+    handlers._collect_texture_dirt(scene, updates)
+    assert not handlers._dirty_images and not handlers._dirty_materials

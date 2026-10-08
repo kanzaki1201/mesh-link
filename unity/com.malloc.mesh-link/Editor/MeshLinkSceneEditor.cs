@@ -145,6 +145,12 @@ namespace Malloc.MeshLink
                 $"Synced Object Materials ({Session.ObjectCount})",
                 EditorStyles.boldLabel);
 
+            if (scene.MaterialMap == null
+                && rows.Any(r => Session.GetTextureChannels(r.MeshId, r.SlotIndex).Length > 0))
+                EditorGUILayout.HelpBox(
+                    "Texture channel properties and Invert need a Material Map.",
+                    MessageType.Info);
+
             foreach (var row in rows)
             {
                 var shortId = row.MeshId.Length <= 8

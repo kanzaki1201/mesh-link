@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "mesh_link"
-version = "0.2.0"
+version = "0.2.1"
 name = "Mesh Link"
 tagline = "Send base meshes and live edits to Unity"
 maintainer = "kanzaki1201"

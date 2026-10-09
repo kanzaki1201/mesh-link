@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using NUnit.Framework;
@@ -65,6 +66,46 @@ namespace Malloc.MeshLink.Tests
             if (scene.IsValid())
             {
                 EditorSceneManager.ClosePreviewScene(scene);
+            }
+        }
+
+        [TestCase("normal", 255, 120, 0, 40)]
+        [TestCase("roughness", 40, 120, 200, 255)]
+        public void DecodeRepacksOnlyTheNormalChannelAsDxt5nm(string channel, int r, int g, int b, int a)
+        {
+            var source = new Texture2D(2, 2);
+            source.SetPixels32(Enumerable.Repeat(new Color32(40, 120, 200, 255), 4).ToArray());
+            source.Apply();
+            var png = ImageConversion.EncodeToPNG(source);
+            UnityEngine.Object.DestroyImmediate(source);
+            string id;
+            using (var sha = SHA256.Create())
+                id = BitConverter.ToString(sha.ComputeHash(png)).Replace("-", string.Empty).ToLowerInvariant();
+            var textures = new MeshLinkTextures(_ => { }, _ => { }, () => { });
+            textures.ApplyBlob("{\"texture_id\":\"" + id + "\"}", png, _ => null, null);
+            var decoded = textures.Decode(id, channel);
+            var render = RenderTexture.GetTemporary(2, 2, 0, RenderTextureFormat.ARGB32,
+                RenderTextureReadWrite.Linear);
+            var previous = RenderTexture.active;
+            var pixels = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);
+            try
+            {
+                Graphics.Blit(decoded, render);
+                RenderTexture.active = render;
+                pixels.ReadPixels(new Rect(0, 0, 2, 2), 0, 0);
+                pixels.Apply();
+                var pixel = pixels.GetPixels32()[0];
+                Assert.That(pixel.r, Is.EqualTo(r).Within(2));
+                Assert.That(pixel.g, Is.EqualTo(g).Within(2));
+                Assert.That(pixel.b, Is.EqualTo(b).Within(2));
+                Assert.That(pixel.a, Is.EqualTo(a).Within(2));
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                RenderTexture.ReleaseTemporary(render);
+                UnityEngine.Object.DestroyImmediate(pixels);
+                UnityEngine.Object.DestroyImmediate(decoded);
             }
         }
 

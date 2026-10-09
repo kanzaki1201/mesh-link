@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the package versions match the tag
+        run: |
+          v="${VERSION#v}"
+          grep -qx "version = \"$v\"" blender/mesh_link/blender_manifest.toml
+          grep -q "\"version\": \"$v\"" unity/com.malloc.mesh-link/package.json
+
+      - name: Build the Blender extension ZIP
+        run: |
+          mkdir -p dist
+          cd blender/mesh_link
+          zip -r -X "../../dist/mesh_link-${VERSION#v}.zip" . -x '__pycache__/*' '*.pyc'
+
+      - name: Pack the Unity package
+        run: npm pack ./unity/com.malloc.mesh-link --pack-destination dist
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${VERSION#v}"
+          cat > notes.md <<NOTES
+          ## Assets
+
+          - \`mesh_link-$v.zip\`: Blender extension (Blender 5.0+). In Blender, open **Edit > Preferences > Get Extensions > Install from Disk** and select the ZIP file.
+          - \`com.malloc.mesh-link-$v.tgz\`: Unity package (Unity 6000.3+). In Unity, open **Window > Package Manager > + > Install package from tarball** and select the file.
+
+          The Unity package also installs from git URL at this tag:
+
+          \`\`\`text
+          https://github.com/kanzaki1201/mesh-link.git?path=unity/com.malloc.mesh-link#$VERSION
+          \`\`\`
+          NOTES
+          gh release create "$VERSION" dist/* --verify-tag --title "Mesh Link $v" --generate-notes --notes-file notes.md

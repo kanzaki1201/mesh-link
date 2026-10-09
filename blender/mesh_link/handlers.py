@@ -245,7 +245,11 @@ def _store_signatures(objects, selected=None):
                  for slot in obj.material_slots if slot.material is not None}
     for pointer, material in materials.items():
         if selected is None or pointer in selected:
-            for key, value in bake.signatures(material).items():
+            current = bake.signatures(material)
+            for stale in [key for owner, key in _signatures
+                          if owner == pointer and key not in current]:
+                del _signatures[(pointer, stale)]
+            for key, value in current.items():
                 if selected is None or key in selected[pointer]:
                     _signatures[(pointer, key)] = value
 
@@ -257,8 +261,15 @@ def _image_keys(material, images):
                    for image in bake.source_images(material.node_tree, source))}
 
 
-def _texture_filter(objects, images, materials):
+def _changed_keys(material, pointer):
+    """Return the channels whose signature changed, and whether a baked channel is gone."""
     from . import bake
+    current = bake.signatures(material)
+    changed = {key for key, value in current.items() if _signatures.get((pointer, key)) != value}
+    return changed, any(owner == pointer and key not in current for owner, key in _signatures)
+
+
+def _texture_filter(objects, images, materials):
     selected = {}
     done = set()
     for _, obj in objects:
@@ -268,14 +279,14 @@ def _texture_filter(objects, images, materials):
                 continue
             pointer = material.as_pointer()
             done.add(pointer)
+            removed = False
             if images:
                 keys = _image_keys(material, images)
             elif pointer in materials:
-                keys = {key for key, value in bake.signatures(material).items()
-                        if _signatures.get((pointer, key)) != value}
+                keys, removed = _changed_keys(material, pointer)
             else:
                 continue
-            if keys:
+            if keys or removed:
                 selected[pointer] = keys
     return selected
 

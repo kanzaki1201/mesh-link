@@ -126,7 +126,7 @@ Other third-party shaders are not tested.
 
 Use the **Mesh Link Output** node of the material:
 
-1. Find the node in the Shader Editor. Mesh Link adds it at the first bake. To add one by hand, use **Shift+A > Mesh Link > Mesh Link Output**.
+1. Find the node in the Shader Editor. Mesh Link adds it at the first bake. To add one manually, use **Shift+A > Mesh Link > Mesh Link Output**.
 2. Press **N**, open the **Node** tab, and press **+** beside the input list.
 3. Double-click the new input and name it, for example `Shadow Mask`.
 4. Connect your mask to it.

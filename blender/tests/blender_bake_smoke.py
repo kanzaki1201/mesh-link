@@ -405,11 +405,21 @@ def assert_auto_bake_loop(bake, handlers, red, blue):
     for _ in range(3):
         tag()
     assert len(sent) == 1
+    node, = output_nodes(material.node_tree)
+    ramp = next(item for item in material.node_tree.nodes if item.type == 'VALTORGB')
+    roughness = material.node_tree.links.new(ramp.outputs['Color'], node.inputs['Roughness'])
+    tag()
+    assert len(sent) == 2 and sent[-1][0][3].keys() == {'roughness'}
     mix.inputs['Factor'].default_value = 0.1
     tag()
-    assert len(sent) == 2
+    assert len(sent) == 3 and sent[-1][0][3].keys() == {'color', 'roughness'}
     tag()
-    assert len(sent) == 2
+    assert len(sent) == 3
+    material.node_tree.links.remove(roughness)
+    tag()
+    assert len(sent) == 4 and sent[-1][0][3] == {} and sent[-1][0][4] == {'color'}
+    tag()
+    assert len(sent) == 4
     handlers._signatures.clear()
     handlers._sync = handlers._session = None
 

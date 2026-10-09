@@ -437,6 +437,12 @@ def test_material_dirt_selects_channels_with_changed_or_missing_signature(handle
     assert handlers._texture_filter(objects, set(), {3}) == {3: {'roughness'}}
     assert handlers._texture_filter(objects, set(), {2}) == {2: {'color', 'roughness'}}
     assert handlers._texture_filter(objects, set(), set()) == {}
+    del state['roughness']
+    handlers._signatures[(3, 'roughness')] = 'r2'
+    assert handlers._texture_filter(objects, set(), {3}) == {3: set()}
+    handlers._store_signatures(objects, {3: set()})
+    assert (3, 'roughness') not in handlers._signatures and (3, 'color') in handlers._signatures
+    assert handlers._texture_filter(objects, set(), {3}) == {}
     assert handlers._texture_filter(objects, {1}, {3}) == {2: {'color'}}
 
 

@@ -1,4 +1,5 @@
 from uuid import uuid4
+import time
 
 import bpy
 import numpy as np
@@ -10,6 +11,9 @@ from .session import Session
 _session = None
 _sync = None
 _endpoint = ""
+_dirty_images = set()
+_dirty_materials = set()
+_texture_changed_at = 0.0
 
 
 def _array(collection, attribute, width=1, dtype=np.int32):
@@ -211,18 +215,81 @@ def can_bake():
             and {'material', 'texture'} <= _session.capabilities)
 
 
+def clear_texture_dirt():
+    _dirty_images.clear()
+    _dirty_materials.clear()
+
+
+def _sent_objects(view_layer):
+    return [(mesh_id, obj) for mesh_id, obj in _sync.objects(view_layer).items() if mesh_id in _sync.sent]
+
+
 def bake_and_send(context):
     from . import bake
 
     if not can_bake():
         raise ValueError('Listener does not support material and texture')
-    sent = [(mesh_id, obj) for mesh_id, obj in _sync.objects(context.view_layer).items()
-            if mesh_id in _sync.sent]
+    sent = _sent_objects(context.view_layer)
     objects = [(mesh_id, obj) for mesh_id, obj in sent
                if bake.render_enabled(obj, context.view_layer)]
     size = int(context.preferences.addons[__package__].preferences.texture_size)
     count = _session.send_bakes(bake.bake_objects(objects, size))
     _session.status = f'Sent {count} textures, skipped {len(sent) - len(objects)} hidden objects'
+
+
+def _texture_filter(objects, images, materials):
+    from . import bake
+    selected = {}
+    for _, obj in objects:
+        for slot in obj.material_slots:
+            material = slot.material
+            if material is None:
+                continue
+            pointer = material.as_pointer()
+            if images:
+                keys = {key for key, _, source, _ in bake.channels(material)
+                        if any(image.as_pointer() in images
+                               for image in bake.source_images(material.node_tree, source))}
+            elif pointer in materials:
+                keys = {key for key, *_ in bake.channels(material)}
+            else:
+                continue
+            if keys or pointer in materials and not images:
+                selected[pointer] = keys
+    return selected
+
+
+def _dirty_objects(objects, selected):
+    return [(mesh_id, obj) for mesh_id, obj in objects
+            if any(slot.material and slot.material.as_pointer() in selected
+                   for slot in obj.material_slots)]
+
+
+def _auto_bake(context):
+    try:
+        if not context.scene.mesh_link_auto_bake or not can_bake():
+            return
+        if not (_dirty_images or _dirty_materials) or time.monotonic() - _texture_changed_at < 2.0:
+            return
+        if any(window.modal_operators for window in context.window_manager.windows):
+            return
+        images, materials = set(_dirty_images), set(_dirty_materials)
+        clear_texture_dirt()
+        from . import bake
+
+        objects = [(mesh_id, obj) for mesh_id, obj in _sent_objects(context.view_layer)
+                   if bake.render_enabled(obj, context.view_layer)]
+        selected = _texture_filter(objects, images, materials)
+        if not selected:
+            return
+        objects = _dirty_objects(objects, selected)
+        size = int(context.preferences.addons[__package__].preferences.texture_size)
+        slots = bake.bake_objects(objects, size, selected)
+        count = _session.send_bakes(slots, auto=True)
+        _session.status = f'Auto baked {count} textures'
+    except Exception as exc:
+        context.scene.mesh_link_auto_bake = False
+        _session.status = str(exc)
 
 
 def connect(context):
@@ -242,6 +309,7 @@ def disconnect():
     if _session:
         _session.close()
     _sync = None
+    clear_texture_dirt()
 
 
 def _save_token():
@@ -259,6 +327,7 @@ def _save_token():
 def depsgraph_update_post(scene, depsgraph):
     if not running():
         return
+    _collect_texture_dirt(scene, depsgraph)
     updated = {update.id.original for update in depsgraph.updates if update.is_updated_geometry}
     material_changed = any(isinstance(update.id, bpy.types.Material) for update in depsgraph.updates)
     for obj in scene.objects:
@@ -266,6 +335,22 @@ def depsgraph_update_post(scene, depsgraph):
             continue
         if material_changed or obj in updated or obj.data in updated or obj.data.shape_keys in updated:
             _sync.dirty.add(obj.as_pointer())
+
+
+def _collect_texture_dirt(scene, depsgraph):
+    global _texture_changed_at
+    if scene.mesh_link_auto_bake:
+        from . import bake
+
+        if not bake.baking:
+            images = {update.id.original.as_pointer() for update in depsgraph.updates
+                      if isinstance(update.id.original, bpy.types.Image)}
+            materials = {update.id.original.as_pointer() for update in depsgraph.updates
+                         if isinstance(update.id.original, bpy.types.Material)}
+            if images or materials:
+                _dirty_images.update(images)
+                _dirty_materials.update(materials)
+                _texture_changed_at = time.monotonic()
 
 
 @persistent
@@ -290,6 +375,7 @@ def drain():
                 if not ready:
                     _sync.force.update(_sync.sent)
                 _sync.tick(bpy.context.view_layer)
+                _auto_bake(bpy.context)
         except Exception as exc:
             _session.close(str(exc))
         for window in bpy.context.window_manager.windows:

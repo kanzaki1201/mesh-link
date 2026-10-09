@@ -265,6 +265,37 @@ def test_texture_move_resends_after_last_reference_clears():
         assert messages[1][1] == red
 
 
+def test_auto_bake_keeps_current_channels_and_clears_missing_channels():
+    with listener() as (session, sock, incoming):
+        ready_textures(session, sock, incoming)
+        red, blue, green = b'red', b'blue', b'green'
+        session.send_bakes([('mesh', 0, 'Paint', {'color': red, 'roughness': blue},
+                             {'color', 'roughness'})])
+        first = [incoming.get(timeout=3) for _ in range(3)]
+        blue_id = first[1][0]['texture_id']
+        session.send_bakes([('mesh', 0, 'Paint', {'color': green},
+                             {'color', 'roughness'})], auto=True)
+        changed = [incoming.get(timeout=3) for _ in range(2)]
+        assert [header['type'] for header, _ in changed] == ['texture', 'material']
+        assert set(changed[1][0]['material']['textures']) == {'color'}
+        assert session._slots[('mesh', 0)]['roughness'][0] == blue_id
+        transmit(sock, type='request_texture', texture_id=blue_id)
+        receive_until(session, lambda: not incoming.empty())
+        assert incoming.get(timeout=3)[1] == blue
+        session.send_bakes([('mesh', 0, 'Paint', {}, {'color'})], auto=True)
+        cleared = incoming.get(timeout=3)[0]['material']['textures']
+        assert cleared == {'roughness': {}}
+        assert 'roughness' not in session._slots[('mesh', 0)]
+        assert len(session._textures) == 1
+        session.send_bakes([('mesh', 0, 'Paint', {}, {'color'})], auto=True)
+        assert incoming.empty()
+        session.send_bakes([('mesh', 0, 'Paint', {'roughness': blue},
+                             {'color', 'roughness'})], auto=True)
+        resent = [incoming.get(timeout=3) for _ in range(2)]
+        assert [header['type'] for header, _ in resent] == ['texture', 'material']
+        assert resent[0][1] == blue
+
+
 @pytest.mark.parametrize("name, message", [("", "type a channel name"),
                                            ("é", "use letters, digits")])
 def test_invalid_channel_name(name, message):

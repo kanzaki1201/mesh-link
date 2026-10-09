@@ -112,7 +112,8 @@ def test_channel_errors_before_first_bake(bake, monkeypatch, missing_color):
     calls = []
     monkeypatch.setattr(bake, 'render_enabled', lambda _obj, _layer: True)
     monkeypatch.setattr(bake, '_bake_object', lambda *_args: calls.append(1))
-    bake.bpy.context = types.SimpleNamespace(scene=object(), view_layer=object())
+    bake.bpy.context = types.SimpleNamespace(
+        scene=object(), view_layer=types.SimpleNamespace(update=lambda: None))
     with pytest.raises(ValueError, match='has no Color input' if missing_color else '"Mask!"'):
         bake.bake_objects(objects, 64)
     assert calls == []
@@ -129,6 +130,7 @@ def test_repeated_material_bakes_once(bake, monkeypatch):
         return {'color': b'png'}
 
     monkeypatch.setattr(bake, '_bake_slot', bake_slot)
+    monkeypatch.setattr(bake, 'channels', lambda _material: [('color',)])
     result = bake._bake_object('mesh', obj, 64)
     assert calls == [1]
     assert [slot[3] for slot in result] == [{'color': b'png'}] * 2
@@ -139,14 +141,15 @@ def test_mode_failure_restores_settings_without_object_operators(bake):
              'use_selected_to_active', 'use_clear')
     settings = types.SimpleNamespace(**{name: name for name in names})
     scene = types.SimpleNamespace(render=types.SimpleNamespace(bake=settings, engine='EEVEE'),
-                                  cycles=types.SimpleNamespace(samples=8))
+                              cycles=types.SimpleNamespace(samples=8, device='GPU'))
     active = types.SimpleNamespace(mode='EDIT')
     objects = types.SimpleNamespace(active=active)
     bake.bpy.context = types.SimpleNamespace(scene=scene,
-                                              view_layer=types.SimpleNamespace(objects=objects),
+                                              view_layer=types.SimpleNamespace(objects=objects,
+                                                                               update=lambda: None),
                                               selected_objects=(active,))
 
-    def fail_mode(*, mode):
+    def fail_mode(*_args, mode):
         raise RuntimeError('mode switch failed')
 
     def forbid_selection(*, action):
@@ -157,5 +160,6 @@ def test_mode_failure_restores_settings_without_object_operators(bake):
     with pytest.raises(RuntimeError, match='mode switch failed'):
         bake.bake_objects([], 64)
     assert scene.render.engine == 'EEVEE' and scene.cycles.samples == 8
+    assert scene.cycles.device == 'GPU'
     assert all(getattr(settings, name) == name for name in names)
     assert objects.active is active

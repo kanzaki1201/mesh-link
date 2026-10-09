@@ -38,10 +38,13 @@ https://github.com/kanzaki1201/mesh-link.git?path=unity/com.malloc.mesh-link
 
 ### Blender extension
 
-1. Zip the contents of `blender/mesh_link/` (the `blender_manifest.toml` file and the Python files).
+1. Download `mesh_link-<version>.zip` from the latest [GitHub release](https://github.com/kanzaki1201/mesh-link/releases/latest).
 2. In Blender, open **Edit > Preferences > Get Extensions**.
 3. Select **Install from Disk** and choose the ZIP file.
 4. Enable **Mesh Link**.
+
+To update, install the ZIP file of the newer release the same way.
+To run the extension from a source checkout, see [Blender extension from source](#blender-extension-from-source).
 
 ## Quick start: Blender to Unity
 

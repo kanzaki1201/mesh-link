@@ -108,6 +108,18 @@ def make_material(name, image):
     return material
 
 
+def add_output(tree, *custom):
+    node = tree.nodes.new('MeshLinkOutputNode')
+    for name in custom:
+        node.node_tree.interface.new_socket(name=name, in_out='INPUT',
+                                            socket_type='NodeSocketColor')
+    return node
+
+
+def output_groups():
+    return [group for group in bpy.data.node_groups if group.name.startswith('.Mesh Link Output')]
+
+
 def nested_group_source(image):
     inner = bpy.data.node_groups.new('Smoke Inner', 'ShaderNodeTree')
     outer = bpy.data.node_groups.new('Smoke Outer', 'ShaderNodeTree')
@@ -190,10 +202,119 @@ def assert_bakes(result, color_a, red, blue):
     assert_linear(textures[('a', 0)]['roughness'], 0.75, 'Smoke Roughness Result')
 
 
+def bake_channel(bake, obj, material, key):
+    result = bake.bake_objects([('n', obj)], 64, {material.as_pointer(): {key}})
+    return result[0][3][key]
+
+
+def pixels(data, name):
+    image = load_png(data, name, 'Non-Color')
+    try:
+        return list(image.pixels)
+    finally:
+        bpy.data.images.remove(image)
+
+
+def assert_principled_fallback(bake, red):
+    obj = make_object('Smoke Preview Plane', [(-1, 1)])
+    material = make_material('Smoke Preview Paint', red)
+    obj.data.materials.append(material)
+    tree = material.node_tree
+    emission = tree.nodes.new('ShaderNodeEmission')
+    output = next(node for node in tree.nodes if node.type == 'OUTPUT_MATERIAL')
+    tree.links.new(emission.outputs['Emission'], output.inputs['Surface'])
+    before = links(tree)
+    assert [entry[0] for entry in bake.channels(material)] == ['color']
+    assert_color(bake_channel(bake, obj, material, 'color'), red)
+    assert links(tree) == before
+
+
+def assert_normal_through_output(bake):
+    obj = make_object('Smoke Normal Plane', [(-1, 1)])
+    material = bpy.data.materials.new('Smoke Normal Paint')
+    material.use_nodes = True
+    obj.data.materials.append(material)
+    tree = material.node_tree
+    tint = tree.nodes.new('ShaderNodeRGB')
+    tint.outputs['Color'].default_value = (0.8, 0.5, 0.9, 1)
+    normal_map = tree.nodes.new('ShaderNodeNormalMap')
+    tree.links.new(tint.outputs['Color'], normal_map.inputs['Color'])
+    shader = tree.nodes.get('Principled BSDF')
+    link = tree.links.new(normal_map.outputs['Normal'], shader.inputs['Normal'])
+    fallback = bake_channel(bake, obj, material, 'normal')
+    tree.links.remove(link)
+    output = add_output(tree)
+    tree.links.new(normal_map.outputs['Normal'], output.inputs['Normal'])
+    assert [entry[0] for entry in bake.channels(material)] == ['normal']
+    through_output = bake_channel(bake, obj, material, 'normal')
+    first = pixels(fallback, 'Smoke Fallback Normal')
+    second = pixels(through_output, 'Smoke Output Normal')
+    assert len(first) == len(second)
+    assert max(abs(a - b) for a, b in zip(first, second)) <= 2 / 255
+    assert abs(first[0] - 0.5) > 0.05, first[:3]
+
+
+def assert_output_node_groups(bake):
+    before = len(output_groups())
+    material = bpy.data.materials.new('Smoke Output Groups')
+    material.use_nodes = True
+    tree = material.node_tree
+    node = add_output(tree, 'Mask')
+    assert node.bl_label == 'Mesh Link Output'
+    assert [socket.name for socket in node.inputs] == [
+        'Color', 'Emission', 'Normal', 'Metallic', 'Roughness', 'Mask']
+    assert all(socket.type == 'RGBA' for socket in node.inputs)
+    rgb = tree.nodes.new('ShaderNodeRGB')
+    tree.links.new(rgb.outputs['Color'], node.inputs['Mask'])
+    node.node_tree.interface.items_tree['Mask'].name = 'Mask 2'
+    assert node.inputs['Mask 2'].is_linked
+    assert [entry[0] for entry in bake.channels(material)] == ['x_mask_2']
+    copy = material.copy()
+    copied = next(item for item in copy.node_tree.nodes if item.bl_idname == 'MeshLinkOutputNode')
+    assert copied.node_tree != node.node_tree and len(output_groups()) == before + 2
+    copied.node_tree.interface.new_socket(name='Extra', in_out='INPUT',
+                                          socket_type='NodeSocketColor')
+    assert 'Extra' in copied.inputs and 'Extra' not in node.inputs
+    copy.node_tree.nodes.remove(copied)
+    assert len(output_groups()) == before + 1 and node.node_tree in output_groups()
+    tree.nodes.remove(node)
+    assert len(output_groups()) == before
+    add_output(tree)
+    bpy.data.materials.remove(material)
+    bpy.data.materials.remove(copy)
+    bpy.data.orphans_purge(do_recursive=True)
+    assert len(output_groups()) == before
+
+
+def assert_output_node_errors(bake):
+    material = bpy.data.materials.new('Smoke Output Errors')
+    material.use_nodes = True
+    node = add_output(material.node_tree, 'Shadow Mask')
+    assert bake.channels(material) == []
+    interface = node.node_tree.interface
+    for name, message in (('Mask!', 'use letters'), ('shadow--mask', 'both clean to'),
+                          ('   ', 'type a channel name')):
+        extra = interface.new_socket(name=name, in_out='INPUT', socket_type='NodeSocketColor')
+        try:
+            bake.channels(material)
+        except ValueError as exc:
+            assert message in str(exc) and material.name in str(exc), str(exc)
+        else:
+            raise AssertionError(name)
+        interface.remove(extra)
+    interface.items_tree['Color'].name = 'Colour'
+    try:
+        bake.channels(material)
+    except ValueError as exc:
+        assert 'input 1 must be "Color"' in str(exc), str(exc)
+    else:
+        raise AssertionError('renamed fixed input')
+
+
 def main():
     bake = load_bake()
-    from mesh_link import channel_node
-    channel_node.register()
+    from mesh_link import output_node
+    output_node.register()
     obj_a = make_object('Smoke Plane', [(-1, 1)])
     obj_b = make_object('Smoke Overlap', [(-2, 0), (0, 2)])
     obj_unlinked = make_object('Smoke Unlinked', [(-1, 1)])
@@ -210,11 +331,11 @@ def main():
     unlinked_tree = material_unlinked.node_tree
     for link in list(unlinked_tree.links):
         unlinked_tree.links.remove(link)
-    unlinked_channel = unlinked_tree.nodes.new('MeshLinkChannelNode')
-    unlinked_channel.channel = 'Shadow Mask'
+    unlinked_channel = add_output(unlinked_tree, 'Shadow Mask')
     unlinked_color = unlinked_tree.nodes.new('ShaderNodeRGB')
     unlinked_color.outputs['Color'].default_value = (0.5, 0.5, 0.5, 1)
-    unlinked_tree.links.new(unlinked_color.outputs['Color'], unlinked_channel.inputs['Color'])
+    unlinked_tree.links.new(unlinked_color.outputs['Color'],
+                            unlinked_channel.inputs['Shadow Mask'])
     obj_a.data.materials.append(material_a)
     obj_a.data.materials.append(None)
     obj_b.data.materials.append(material_red)
@@ -224,23 +345,21 @@ def main():
     obj_hidden.hide_set(True)
     obj_b.data.polygons[1].material_index = 1
     tree = material_a.node_tree
-    custom_channel = tree.nodes.new('MeshLinkChannelNode')
-    custom_channel.channel = 'Shadow Mask'
-    assert custom_channel.draw_label() == 'Mesh Link: Shadow Mask'
-    assert sum(group.name == '.Mesh Link Channel' for group in bpy.data.node_groups) == 1
+    custom_channel = add_output(tree, 'Shadow Mask')
+    image_node = next(node for node in tree.nodes if node.type == 'TEX_IMAGE')
+    tree.links.new(image_node.outputs['Color'], custom_channel.inputs['Color'])
     mask_node = tree.nodes.new('ShaderNodeRGB')
     mask_node.outputs['Color'].default_value = (0.5, 0.5, 0.5, 1)
-    tree.links.new(mask_node.outputs['Color'], custom_channel.inputs['Color'])
+    tree.links.new(mask_node.outputs['Color'], custom_channel.inputs['Shadow Mask'])
     shader = tree.nodes.get('Principled BSDF')
-    metallic = tree.nodes.new('ShaderNodeValue')
-    metallic.outputs['Value'].default_value = 0.25
-    tree.links.new(metallic.outputs['Value'], shader.inputs['Metallic'])
-    roughness = tree.nodes.new('ShaderNodeValue')
-    roughness.outputs['Value'].default_value = 0.75
-    tree.links.new(roughness.outputs['Value'], shader.inputs['Roughness'])
+    for name, value, wrong in (('Metallic', 0.25, 0.9), ('Roughness', 0.75, 0.1)):
+        # The Principled BSDF holds other values, so the Output node must win.
+        for socket, number in ((custom_channel.inputs[name], value), (shader.inputs[name], wrong)):
+            node = tree.nodes.new('ShaderNodeValue')
+            node.outputs['Value'].default_value = number
+            tree.links.new(node.outputs['Value'], socket)
     normal_node = tree.nodes.new('ShaderNodeNewGeometry')
-    tree.links.new(normal_node.outputs['Normal'],
-                   tree.nodes.get('Principled BSDF').inputs['Normal'])
+    tree.links.new(normal_node.outputs['Normal'], custom_channel.inputs['Normal'])
     second_uv = obj_a.data.uv_layers.new(name='Other UV')
     second_uv.active_render = True
     obj_a.data.uv_layers.active_index = 0
@@ -371,6 +490,10 @@ def main():
     scene.render.engine = 'CYCLES'
     scene.render.bake.target = 'IMAGE_TEXTURES'
     assert bpy.ops.object.bake(type='EMIT') == {'FINISHED'}
+    assert_principled_fallback(bake, red)
+    assert_normal_through_output(bake)
+    assert_output_node_groups(bake)
+    assert_output_node_errors(bake)
 
 
 try:

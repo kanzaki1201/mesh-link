@@ -7,6 +7,15 @@ from .session import channel_key
 
 baking = False
 
+# (Mesh Link Output input, Principled BSDF input, channel, bake type)
+FIXED_INPUTS = (
+    ('Color', 'Base Color', 'color', 'EMIT'),
+    ('Emission', 'Emission Color', 'emissive', 'EMIT'),
+    ('Normal', 'Normal', 'normal', 'NORMAL'),
+    ('Metallic', 'Metallic', 'metalness', 'EMIT'),
+    ('Roughness', 'Roughness', 'roughness', 'EMIT'),
+)
+
 
 def render_enabled(obj, view_layer):
     if not obj.visible_get(view_layer=view_layer) or obj.hide_render:
@@ -27,58 +36,54 @@ def _active_link(socket):
     return next((link for link in socket.links if link.is_valid and not link.is_muted), None)
 
 
-def _extra_channels(material, output):
+def _custom_channels(material, node, output):
+    inputs = list(node.inputs)
+    for position, (name, *_) in enumerate(FIXED_INPUTS):
+        if position >= len(inputs) or inputs[position].name != name:
+            raise ValueError(f'{material.name}: Mesh Link Output input {position + 1} must be '
+                             f'"{name}". Rename it back, or add a new Mesh Link Output node.')
     result = []
     names = {}
-    for node in material.node_tree.nodes:
-        if node.bl_idname != 'MeshLinkChannelNode':
-            continue
+    for socket in inputs[len(FIXED_INPUTS):]:
         try:
-            channel = channel_key(node.channel)
+            channel = channel_key(socket.name)
         except ValueError as exc:
-            if not node.channel.strip():
-                raise ValueError(f"{material.name}: a Mesh Link Channel node has no name. "
-                                 "Type a name on the node.") from exc
-            raise ValueError(f'{material.name}: Mesh Link Channel "{node.channel}": {exc}') from exc
+            raise ValueError(f'{material.name}: Mesh Link Output input "{socket.name}": '
+                             f'{exc}. Rename it in the Node tab of the sidebar.') from exc
         if channel in names:
-            raise ValueError(f'{material.name}: Mesh Link Channel "{names[channel]}" and '
-                             f'Mesh Link Channel "{node.channel}": '
-                             f"use different Mesh Link Channel names; both clean to {channel}")
-        names[channel] = node.channel
-        socket = node.inputs.get('Color')
-        if socket is None:
-            raise ValueError(f'{material.name}: Mesh Link Channel "{node.channel}" has no Color input. '
-                             'Add a new Mesh Link Channel node.')
+            raise ValueError(f'{material.name}: Mesh Link Output inputs "{names[channel]}" and '
+                             f'"{socket.name}": use different names; both clean to {channel}')
+        names[channel] = socket.name
         link = _active_link(socket)
         if output is not None and link is not None:
             result.append((channel, 'EMIT', link.from_socket, output))
     return result
 
 
+def _standard_channels(inputs, output):
+    result = []
+    for position, (_, _, channel, bake_type) in enumerate(FIXED_INPUTS):
+        link = _active_link(inputs[position])
+        if output is not None and link is not None:
+            result.append((channel, bake_type, link.from_socket, output))
+    return result
+
+
 def channels(material):
     if material is None or not material.use_nodes or material.node_tree is None:
         return []
-    tree = material.node_tree
-    output = next((node for node in tree.nodes
+    nodes = material.node_tree.nodes
+    output = next((node for node in nodes
                    if node.type == 'OUTPUT_MATERIAL' and node.is_active_output), None)
-    extra = _extra_channels(material, output)
-    surface = _active_link(output.inputs['Surface']) if output is not None else None
-    if surface is None:
-        return extra
-    shader = surface.from_node
-    result = []
-    if shader.type == 'BSDF_PRINCIPLED':
-        for input_name, channel, bake_type in (
-                ('Normal', 'normal', 'NORMAL'),
-                ('Base Color', 'color', 'EMIT'),
-                ('Emission Color', 'emissive', 'EMIT'),
-                ('Metallic', 'metalness', 'EMIT'),
-                ('Roughness', 'roughness', 'EMIT')):
-            socket = shader.inputs.get(input_name)
-            link = _active_link(socket)
-            if link is not None:
-                result.append((channel, bake_type, link.from_socket, output))
-    return result + extra
+    custom = next((node for node in nodes if node.bl_idname == 'MeshLinkOutputNode'), None)
+    if custom is not None:
+        extra = _custom_channels(material, custom, output)
+        return _standard_channels(list(custom.inputs), output) + extra
+    shader = next((node for node in nodes if node.type == 'BSDF_PRINCIPLED'), None)
+    if shader is None:
+        return []
+    inputs = [shader.inputs.get(principled) for _, principled, _, _ in FIXED_INPUTS]
+    return _standard_channels(inputs, output)
 
 
 def _linked_source(tree, socket, stack):
@@ -152,22 +157,26 @@ def _bake_channel(obj, material, channel, bake_type, source, output, size):
     image = bpy.data.images.new("Mesh Link Bake", width=size, height=size,
                                 alpha=True, float_buffer=False)
     target = None
-    emission = None
+    shader = None
     try:
         image.colorspace_settings.name = 'sRGB' if channel in {'color', 'emissive'} else 'Non-Color'
         target = tree.nodes.new('ShaderNodeTexImage')
         target.image = image
         tree.nodes.active = target
         if bake_type == 'EMIT':
-            emission = tree.nodes.new('ShaderNodeEmission')
-            tree.links.new(source, emission.inputs['Color'])
-            tree.links.new(emission.outputs['Emission'], surface)
+            shader = tree.nodes.new('ShaderNodeEmission')
+            tree.links.new(source, shader.inputs['Color'])
+            tree.links.new(shader.outputs['Emission'], surface)
+        else:
+            shader = tree.nodes.new('ShaderNodeBsdfDiffuse')
+            tree.links.new(source, shader.inputs['Normal'])
+            tree.links.new(shader.outputs['BSDF'], surface)
         if bpy.ops.object.bake('EXEC_DEFAULT', False, type=bake_type) != {'FINISHED'}:
             raise RuntimeError(f"{obj.name}: {material.name}: {channel} bake did not finish")
         return _png(image)
     finally:
-        if emission is not None:
-            tree.nodes.remove(emission)
+        if shader is not None:
+            tree.nodes.remove(shader)
             if original is not None:
                 tree.links.new(original, surface)
         if target is not None:

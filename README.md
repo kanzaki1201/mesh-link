@@ -13,7 +13,6 @@ It is not affiliated with or endorsed by Blender, Nomad Sculpt or their develope
 - **Your materials.** Put any Unity material on each slot: lilToon, MK Toon, MToon, URP Lit, and others.
 - **Painted textures from Blender.** Your painted maps show on the Unity materials. **Auto Bake** sends them after each paint pause. Paint System and Ucupaint work.
 - **Vertex paint from Nomad.** Nomad vertex colors show in Unity.
-- **Safe.** The preview is temporary. Your material assets never change.
 
 ## Requirements
 
@@ -106,6 +105,16 @@ Mesh Link reads what is linked into the Principled BSDF of each material:
 - Hidden objects and objects that do not render are skipped.
 - Set the bake size in the extension preferences with **Texture Size** (default 1024).
 
+### Blender materials
+
+Use materials with the Principled BSDF or other built-in Blender shader nodes.
+
+MToon materials of the VRM add-on are not supported.
+Convert them to Principled BSDF materials first.
+[Malloc's VRoid Blender Tools](https://github.com/kanzaki1201/malloc-vroid-blender-tools) converts VRoid MToon materials in bulk.
+
+Other third-party shaders are not tested.
+
 ### Extra maps, such as toon masks
 
 Use a **Mesh Link Output** node:
@@ -125,34 +134,58 @@ In Unity, `Shadow Mask` shows as `x_shadow_mask`.
 ### Shader setup
 
 Mesh Link cannot turn on shader features.
-Turn on the feature before you send a map for it:
+Many shaders show a map only when the feature for it is on, and some also need a texture in the slot before they use it.
 
-| Shader | Normal | Emission |
-|---|---|---|
-| lilToon | Turn on **Normal Map** | Turn on **Emission** |
-| MK Toon | Assign any placeholder normal map | Assign any placeholder emission map |
-| URP Lit | Assign any placeholder **Normal Map** | Turn on **Emission** and set its color to white |
+If a map does not show:
 
-MK Toon also needs a placeholder albedo map.
-URP Lit smoothness is not filled.
+1. Turn on the matching feature on the material, for example **Normal Map** or **Emission**.
+2. If the shader still ignores the map, assign any placeholder texture to that slot in the material.
+3. For emission, set the emission color to white, because the color multiplies the map.
 
 ## Troubleshooting
 
-- **Nothing happens after Connect.** Press **Accept** on the MeshLinkScene in Unity. For Nomad, accept in Nomad.
-- **The connection fails.** Check **Host** and **Port** on both sides, and the firewall. `127.0.0.1` works only on one machine.
-- **Bake & Send Textures is grayed out.** Connect to Unity first.
-- **Auto Bake turned itself off.** Read the error in the Mesh Link tab, fix it, and turn Auto Bake on again.
-- **A texture does not show.** Check [Shader setup](#shader-setup), and select a property in the channel's drop-down list.
-- **Blender reports an n-gon.** Make the faces triangles or quads, then connect again.
-- **A second Blender cannot connect.** Unity accepts one Blender at a time.
-- **MToon looks too bright up close.** This is a known issue.
+### Nothing happens after Connect
+
+Press **Accept** on the MeshLinkScene in Unity.
+For Nomad, accept the request in Nomad.
+
+### The connection fails
+
+Check **Host** and **Port** on both sides, and the firewall.
+`127.0.0.1` works only on one machine.
+
+### Bake & Send Textures is grayed out
+
+Connect to Unity first.
+
+### Auto Bake turned itself off
+
+Read the error in the Mesh Link tab, fix it, and turn Auto Bake on again.
+
+### A texture does not show
+
+Check [Shader setup](#shader-setup), and select a property in the channel's drop-down list.
+
+### Blender reports an n-gon
+
+Make the faces triangles or quads, then connect again.
+
+### A second Blender cannot connect
+
+Unity accepts one Blender at a time.
+
+### MToon looks too bright up close
+
+This is a known issue.
 
 ## Limits
 
 - Unity Editor only, one way from the source to Unity.
 - The preview clears when sync stops, the connection drops, scripts reload, or Play Mode starts.
 - No modifiers, armatures, hierarchy, cameras, or lights. Shape keys send the active key.
+- Faces must be triangles or quads. N-gons stop the link.
 - Blender vertex colors and Nomad textures are not sent.
+- Blender MToon materials are not supported. See [Blender materials](#blender-materials).
 - Objects above 2,000,000 vertices stop the link.
 
 ## Development

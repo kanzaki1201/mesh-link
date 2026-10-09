@@ -110,9 +110,13 @@ It works with plain image textures, baked maps, and layered painting add-ons suc
 4. In the Mesh Link sidebar, press **Bake & Send Textures**.
 5. Unity shows the baked maps on the preview.
 
-Select **Auto Bake** under the button to send changed texture channels after a two-second paint pause.
+Select **Auto Bake** under the button to bake and send changes without the button.
+When you stop painting for two seconds, Mesh Link bakes again only the channels whose sources changed.
+A brush stroke or a viewport drag in progress delays the bake.
+Auto Bake works in Texture Paint mode and adds no undo steps.
 The checkbox sends nothing when you turn it on.
-Press **Bake & Send Textures** to send a full set at any time.
+Press **Bake & Send Textures** once to send a full set, then paint.
+If an auto bake fails, Mesh Link turns **Auto Bake** off and shows the error in the sidebar.
 
 Mesh Link bakes each material slot of each visible object with Cycles, on the active UV map.
 Blender waits until the bake ends.
@@ -121,7 +125,10 @@ Hidden objects and objects that do not render are skipped.
 
 ### What is sent
 
-Mesh Link reads the inputs of the Principled BSDF that feeds the Material Output.
+Mesh Link reads the inputs of the first Principled BSDF in the material.
+The Principled BSDF does not need to feed the Material Output.
+A channel preview of a layer add-on, such as the Paint System preview, therefore keeps the channels.
+A material that has a **Mesh Link Output** node sends only what that node receives.
 
 | Blender input | Channel | Unity property by default |
 |---|---|---|
@@ -145,17 +152,30 @@ For `roughness`, invert is on by default when the shader has `_SmoothnessTex` an
 ### Extra maps, such as toon masks
 
 Toon shaders use extra maps, for example shadow or rim masks.
-Send them with a **Mesh Link Channel** node:
+Send them with a **Mesh Link Output** node:
 
-1. In the Shader Editor, add **Shift+A > Mesh Link > Mesh Link Channel**.
-2. Connect your mask to its **Color** input.
-3. Type `Shadow Mask` as the name on the node.
-4. Press **Bake & Send Textures**.
+1. In the Shader Editor, add **Shift+A > Mesh Link > Mesh Link Output**.
+2. Open the sidebar (**N**), select the **Node** tab, and find the node's input list.
+3. Press **+** beside the list. Double-click the new input and type `Shadow Mask`.
+4. Connect your mask to that input.
+5. Press **Bake & Send Textures**.
 
-The `Shadow Mask` node sends `x_shadow_mask`.
-Mesh Link trims and lowercases the node name, and replaces spaces and hyphens with `_`.
+The input `Shadow Mask` sends `x_shadow_mask`.
+Mesh Link trims and lowercases the input name, and replaces spaces and hyphens with `_`.
 After conversion, the name can contain only `a-z`, `0-9`, and `_`.
-A duplicate name on one material stops the bake with an error.
+An empty name, or two names that give the same key, stops the bake with an error.
+Rename and reorder custom inputs in the same list.
+Press **-** to remove the selected custom input.
+
+The node also has the five standard inputs, `Color`, `Emission`, `Normal`, `Metallic`, and `Roughness`.
+They send the channels of the table above.
+Do not rename them or remove them, or the bake stops with an error.
+If a material has a Mesh Link Output node, Mesh Link ignores its Principled BSDF.
+Link all the standard channels you want to send to the node.
+A material with more than one node uses the first one.
+
+Outputs of a layer add-on that do not feed the Principled BSDF, such as the Paint System `Occlusion` output, are not sent by default.
+Add a custom input to the Mesh Link Output node and connect the output to it.
 
 ### Shader settings
 
@@ -184,6 +204,7 @@ Your material assets do not change.
 - **A second Blender instance cannot connect.** Unity accepts one Blender client at a time. Disconnect the first one.
 - **Blender reports an n-gon.** Convert the faces of that object to triangles or quads, then connect again.
 - **Bake & Send Textures is grayed out.** Connect to Unity first.
+- **Auto Bake turned itself off.** An auto bake failed. Read the error in the Mesh Link sidebar, fix it, and select **Auto Bake** again.
 - **A texture does not show.** Turn on the matching feature on the material. See [Shader settings](#shader-settings). For an `x_` channel, select a property in the drop-down list.
 - **MToon looks too bright up close.** This is a known issue with MToon on preview meshes.
 

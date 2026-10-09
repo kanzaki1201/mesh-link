@@ -8,7 +8,7 @@ from .transport import Transport
 def channel_key(name):
     name = re.sub(r"[ -]+", "_", name.strip().lower())
     if not name:
-        raise ValueError("type a channel name on the Mesh Link Channel node")
+        raise ValueError("type a channel name")
     if not re.fullmatch(r"[a-z0-9_]+", name):
         raise ValueError("use letters, digits, spaces, hyphens, or underscores "
                          "(letters are lowercased)")

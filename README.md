@@ -28,13 +28,20 @@ It is not affiliated with or endorsed by Blender, Nomad Sculpt or their develope
 https://github.com/kanzaki1201/mesh-link.git?path=unity/com.malloc.mesh-link
 ```
 
-**Blender:**
+**Blender:** add Mesh Link as a remote repository, so Blender shows updates.
 
-1. Download `mesh_link-<version>.zip` from the [latest release](https://github.com/kanzaki1201/mesh-link/releases/latest).
-2. In Blender, open **Edit > Preferences > Get Extensions > Install from Disk** and select the ZIP file.
-3. Enable **Mesh Link**.
+1. In Blender, open **Edit > Preferences > Get Extensions**.
+2. Open **Repositories**, select **+ > Add Remote Repository**, and enter:
 
-To update, install the newer ZIP file the same way.
+   ```text
+   https://github.com/kanzaki1201/mesh-link/releases/latest/download/index.json
+   ```
+
+3. Find **Mesh Link** in the list and press **Install**.
+
+Blender checks this repository for new versions and shows an **Update** button.
+
+To install without a repository, download `mesh_link-<version>.zip` from the [latest release](https://github.com/kanzaki1201/mesh-link/releases/latest), then use **Get Extensions > Install from Disk**.
 
 ## Start with Blender
 

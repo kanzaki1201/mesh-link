@@ -1,6 +1,6 @@
 import bpy
 
-from .bake import FIXED_INPUTS
+from .bake import FIXED_INPUTS, fixed_count
 
 
 def _shared(group, node):
@@ -48,7 +48,7 @@ def _output_node(context):
 def _custom_inputs(interface):
     inputs = [item for item in interface.items_tree
               if item.item_type == 'SOCKET' and item.in_out == 'INPUT']
-    return inputs[len(FIXED_INPUTS):]
+    return inputs[fixed_count([item.name for item in inputs]):]
 
 
 class MESHLINK_OT_output_input_add(bpy.types.Operator):

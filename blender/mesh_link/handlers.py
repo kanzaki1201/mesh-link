@@ -13,6 +13,7 @@ _sync = None
 _endpoint = ""
 _dirty_images = set()
 _dirty_materials = set()
+_signatures = {}
 _texture_changed_at = 0.0
 
 
@@ -234,27 +235,47 @@ def bake_and_send(context):
                if bake.render_enabled(obj, context.view_layer)]
     size = int(context.preferences.addons[__package__].preferences.texture_size)
     count = _session.send_bakes(bake.bake_objects(objects, size))
+    _store_signatures(objects)
     _session.status = f'Sent {count} textures, skipped {len(sent) - len(objects)} hidden objects'
+
+
+def _store_signatures(objects, selected=None):
+    from . import bake
+    materials = {slot.material.as_pointer(): slot.material for _, obj in objects
+                 for slot in obj.material_slots if slot.material is not None}
+    for pointer, material in materials.items():
+        if selected is None or pointer in selected:
+            for key, value in bake.signatures(material).items():
+                if selected is None or key in selected[pointer]:
+                    _signatures[(pointer, key)] = value
+
+
+def _image_keys(material, images):
+    from . import bake
+    return {key for key, sources in bake.channel_sources(material).items()
+            if any(image.as_pointer() in images for source in sources
+                   for image in bake.source_images(material.node_tree, source))}
 
 
 def _texture_filter(objects, images, materials):
     from . import bake
     selected = {}
+    done = set()
     for _, obj in objects:
         for slot in obj.material_slots:
             material = slot.material
-            if material is None:
+            if material is None or material.as_pointer() in done:
                 continue
             pointer = material.as_pointer()
+            done.add(pointer)
             if images:
-                keys = {key for key, _, source, _ in bake.channels(material)
-                        if any(image.as_pointer() in images
-                               for image in bake.source_images(material.node_tree, source))}
+                keys = _image_keys(material, images)
             elif pointer in materials:
-                keys = {key for key, *_ in bake.channels(material)}
+                keys = {key for key, value in bake.signatures(material).items()
+                        if _signatures.get((pointer, key)) != value}
             else:
                 continue
-            if keys or pointer in materials and not images:
+            if keys:
                 selected[pointer] = keys
     return selected
 
@@ -279,6 +300,7 @@ def _auto_bake(context):
 
         objects = [(mesh_id, obj) for mesh_id, obj in _sent_objects(context.view_layer)
                    if bake.render_enabled(obj, context.view_layer)]
+        bake.ensure_outputs(objects)
         selected = _texture_filter(objects, images, materials)
         if not selected:
             return
@@ -286,6 +308,7 @@ def _auto_bake(context):
         size = int(context.preferences.addons[__package__].preferences.texture_size)
         slots = bake.bake_objects(objects, size, selected)
         count = _session.send_bakes(slots, auto=True)
+        _store_signatures(objects, selected)
         _session.status = f'Auto baked {count} textures'
     except Exception as exc:
         context.scene.mesh_link_auto_bake = False
@@ -310,6 +333,7 @@ def disconnect():
         _session.close()
     _sync = None
     clear_texture_dirt()
+    _signatures.clear()
 
 
 def _save_token():

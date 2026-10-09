@@ -88,17 +88,24 @@ To show vertex paint, use a Unity shader that reads vertex colors.
 
 ### Which maps are sent
 
-Mesh Link reads what is linked into the Principled BSDF of each material:
+Mesh Link reads the **Mesh Link Output** node of each material.
+At the first bake, Mesh Link adds this node to each material that has a Principled BSDF.
+It connects every linked input of the first Principled BSDF to the node.
+The Principled BSDF does not need to connect to the Material Output.
+A material that has no Principled BSDF and no Mesh Link Output node sends no maps.
 
-| Blender input | Unity property by default |
-|---|---|
-| Base Color | The main texture of the shader (`_MainTex` or `_BaseMap`) |
-| Emission Color | `_EmissionMap` |
-| Normal | `_BumpMap` or `_NormalMap` |
-| Metallic | `_MetallicMap` or `_MetallicGlossMap` |
-| Roughness | `_RoughnessMap`, or `_SmoothnessTex` inverted |
+| Node input | Principled BSDF input | Unity property by default |
+|---|---|---|
+| Color | Base Color | The main texture of the shader (`_MainTex` or `_BaseMap`) |
+| Emission | Emission Color | `_EmissionMap` |
+| Normal | Normal | `_BumpMap` or `_NormalMap` |
+| Metallic | Metallic | `_MetallicMap` or `_MetallicGlossMap` |
+| Roughness | Roughness | `_RoughnessMap`, or `_SmoothnessTex` inverted |
+| Alpha | Alpha | The alpha of the main texture |
 
 - An input with no link sends nothing. Plain values, such as a color swatch, are not sent.
+- Alpha is not a separate map. Mesh Link bakes it into the alpha of the Color map, and only when Color is linked.
+- Mesh Link reads only the node. After the node exists, change its connections to change the maps.
 - A Paint System channel preview does not stop the maps.
 - To change the property, use the drop-down list under the material row. Select `(unbound)` to hide a map.
 - **Invert** flips a gray map, for example roughness into smoothness.
@@ -117,16 +124,16 @@ Other third-party shaders are not tested.
 
 ### Extra maps, such as toon masks
 
-Use a **Mesh Link Output** node:
+Use the **Mesh Link Output** node of the material:
 
-1. In the Shader Editor, add **Shift+A > Mesh Link > Mesh Link Output**.
+1. Find the node in the Shader Editor. Mesh Link adds it at the first bake. To add one by hand, use **Shift+A > Mesh Link > Mesh Link Output**.
 2. Press **N**, open the **Node** tab, and press **+** beside the input list.
 3. Double-click the new input and name it, for example `Shadow Mask`.
 4. Connect your mask to it.
 
-The node also has the standard inputs `Color`, `Emission`, `Normal`, `Metallic`, and `Roughness`.
-When a material has this node, Mesh Link reads only the node, so connect every map that you want to send.
-Paint System outputs that do not go into the Principled BSDF, such as `Occlusion`, need this node.
+The node also has the standard inputs `Color`, `Emission`, `Normal`, `Metallic`, `Roughness`, and `Alpha`.
+A node from an earlier version has no `Alpha` input and works as before.
+Paint System outputs that do not go into the Principled BSDF, such as `Occlusion`, need an extra input.
 
 Input names can use letters, digits, spaces, and hyphens.
 In Unity, `Shadow Mask` shows as `x_shadow_mask`.

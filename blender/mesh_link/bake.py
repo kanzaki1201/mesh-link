@@ -1,20 +1,26 @@
+from contextlib import contextmanager
+import hashlib
 import os
 import tempfile
 
 import bpy
+import numpy as np
 
 from .session import channel_key
 
 baking = False
 
 # (Mesh Link Output input, Principled BSDF input, channel, bake type)
+# Alpha has no channel of its own: it bakes into the alpha of the color map.
 FIXED_INPUTS = (
     ('Color', 'Base Color', 'color', 'EMIT'),
     ('Emission', 'Emission Color', 'emissive', 'EMIT'),
     ('Normal', 'Normal', 'normal', 'NORMAL'),
     ('Metallic', 'Metallic', 'metalness', 'EMIT'),
     ('Roughness', 'Roughness', 'roughness', 'EMIT'),
+    ('Alpha', 'Alpha', None, 'EMIT'),
 )
+ALPHA = len(FIXED_INPUTS) - 1
 
 
 def render_enabled(obj, view_layer):
@@ -36,15 +42,21 @@ def _active_link(socket):
     return next((link for link in socket.links if link.is_valid and not link.is_muted), None)
 
 
+def fixed_count(names):
+    """Count the fixed inputs of a node. A node from before the Alpha input has one fewer."""
+    return len(FIXED_INPUTS) if list(names)[ALPHA:ALPHA + 1] == ['Alpha'] else ALPHA
+
+
 def _custom_channels(material, node, output):
     inputs = list(node.inputs)
-    for position, (name, *_) in enumerate(FIXED_INPUTS):
+    fixed = fixed_count([socket.name for socket in inputs])
+    for position, (name, *_) in enumerate(FIXED_INPUTS[:fixed]):
         if position >= len(inputs) or inputs[position].name != name:
             raise ValueError(f'{material.name}: Mesh Link Output input {position + 1} must be '
                              f'"{name}". Rename it back, or add a new Mesh Link Output node.')
     result = []
     names = {}
-    for socket in inputs[len(FIXED_INPUTS):]:
+    for socket in inputs[fixed:]:
         try:
             channel = channel_key(socket.name)
         except ValueError as exc:
@@ -63,35 +75,89 @@ def _custom_channels(material, node, output):
 def _standard_channels(inputs, output):
     result = []
     for position, (_, _, channel, bake_type) in enumerate(FIXED_INPUTS):
-        link = _active_link(inputs[position])
+        link = _active_link(inputs[position]) if channel is not None else None
         if output is not None and link is not None:
             result.append((channel, bake_type, link.from_socket, output))
     return result
 
 
-def channels(material):
+def _output_nodes(material):
+    """Return the active Material Output and the first Mesh Link Output node of a material."""
     if material is None or not material.use_nodes or material.node_tree is None:
-        return []
+        return None, None
     nodes = material.node_tree.nodes
     output = next((node for node in nodes
                    if node.type == 'OUTPUT_MATERIAL' and node.is_active_output), None)
     custom = next((node for node in nodes if node.bl_idname == 'MeshLinkOutputNode'), None)
-    if custom is not None:
-        extra = _custom_channels(material, custom, output)
-        return _standard_channels(list(custom.inputs), output) + extra
-    shader = next((node for node in nodes if node.type == 'BSDF_PRINCIPLED'), None)
-    if shader is None:
+    return output, custom
+
+
+def channels(material):
+    """List (channel, bake type, source socket, Material Output) from the Mesh Link Output node."""
+    output, custom = _output_nodes(material)
+    if custom is None:
         return []
-    inputs = [shader.inputs.get(principled) for _, principled, _, _ in FIXED_INPUTS]
-    return _standard_channels(inputs, output)
+    extra = _custom_channels(material, custom, output)
+    return _standard_channels(list(custom.inputs), output) + extra
 
 
-def _linked_source(tree, socket, stack):
-    link = _active_link(socket)
+def alpha_source(material):
+    """Return the socket linked to the Alpha input of the Mesh Link Output node, or None."""
+    output, custom = _output_nodes(material)
+    if output is None or custom is None:
+        return None
+    inputs = list(custom.inputs)
+    if fixed_count([socket.name for socket in inputs]) <= ALPHA:
+        return None
+    link = _active_link(inputs[ALPHA])
+    return link.from_socket if link is not None else None
+
+
+def channel_sources(material):
+    """Map each channel to the sockets that feed it. The color channel includes its alpha source."""
+    result = {entry[0]: [entry[2]] for entry in channels(material)}
+    alpha = alpha_source(material)
+    if alpha is not None and 'color' in result:
+        result['color'].append(alpha)
+    return result
+
+
+def ensure_output_node(material):
+    """Add a Mesh Link Output node linked from the first Principled BSDF when a material has none."""
+    if material is None or not material.use_nodes or material.node_tree is None:
+        return False
+    tree = material.node_tree
+    if any(node.bl_idname == 'MeshLinkOutputNode' for node in tree.nodes):
+        return False
+    shader = next((node for node in tree.nodes if node.type == 'BSDF_PRINCIPLED'), None)
+    if shader is None:
+        return False
+    node = tree.nodes.new('MeshLinkOutputNode')
+    node.location = (shader.location.x + shader.width + 40, shader.location.y + 160)
+    for name, principled, *_ in FIXED_INPUTS:
+        link = _active_link(shader.inputs.get(principled))
+        if link is not None:
+            tree.links.new(link.from_socket, node.inputs[name])
+    return True
+
+
+def _linked(tree, socket, cache):
+    """Find the active link into a socket. A cache turns each tree into one pass over its links."""
+    if socket is None or not socket.is_linked:
+        return None
+    key = ('links', tree.as_pointer())
+    if key not in cache:
+        cache[key] = {link.to_socket.as_pointer(): link for link in tree.links
+                      if link.is_valid and not link.is_muted}
+    return cache[key].get(socket.as_pointer())
+
+
+def _linked_source(tree, socket, stack, cache):
+    link = _linked(tree, socket, cache)
     return [(tree, link.from_socket, stack)] if link is not None else []
 
 
-def _source_inputs(tree, socket, stack):
+def _source_inputs(tree, socket, stack, cache):
     node = socket.node
     if node.type == 'GROUP':
         inner = node.node_tree
@@ -103,20 +169,20 @@ def _source_inputs(tree, socket, stack):
             return []
         entry = next((item for item in output.inputs
                       if item.identifier == socket.identifier), None)
-        return _linked_source(inner, entry, stack + ((node, tree),))
+        return _linked_source(inner, entry, stack + ((node, tree),), cache)
     if node.type == 'GROUP_INPUT':
         if not stack:
             return []
         group, parent = stack[-1]
         entry = next((item for item in group.inputs
                       if item.identifier == socket.identifier), None)
-        return _linked_source(parent, entry, stack[:-1])
-    return [state for entry in node.inputs for state in _linked_source(tree, entry, stack)]
+        return _linked_source(parent, entry, stack[:-1], cache)
+    return [state for entry in node.inputs
+            for state in _linked_source(tree, entry, stack, cache)]
 
 
-def source_images(tree, source):
-    """Find images upstream of a channel source socket."""
-    images = set()
+def _walk(tree, source, through_images, cache):
+    """Yield (tree, socket, stack) for each socket upstream of a channel source, once each."""
     pending = [(tree, source, ())]
     seen = set()
     while pending:
@@ -127,12 +193,91 @@ def source_images(tree, source):
         if key in seen:
             continue
         seen.add(key)
-        if node.type == 'TEX_IMAGE':
-            if node.image is not None:
-                images.add(node.image)
-        else:
-            pending.extend(_source_inputs(tree, socket, stack))
-    return images
+        yield tree, socket, stack
+        if through_images or node.type != 'TEX_IMAGE':
+            pending.extend(_source_inputs(tree, socket, stack, cache))
+
+
+def source_images(tree, source):
+    """Find images upstream of a channel source socket."""
+    return {socket.node.image for _, socket, _ in _walk(tree, source, False, {})
+            if socket.node.type == 'TEX_IMAGE' and socket.node.image is not None}
+
+
+_PLAIN = {'ENUM', 'BOOLEAN', 'INT', 'FLOAT', 'STRING'}
+_EDITOR_ONLY = {'name', 'label', 'location', 'width', 'width_hidden', 'height', 'dimensions',
+                'select', 'hide', 'show_options', 'show_preview', 'show_texture',
+                'use_custom_color', 'color'}
+_setting_names = {}
+
+
+def _plain(value):
+    """Turn a socket or node value into something with a stable repr."""
+    if isinstance(value, (bool, int, float, str)) or value is None:
+        return value
+    name = getattr(value, 'name', None)
+    if isinstance(name, str):
+        return name
+    try:
+        return tuple(_plain(item) for item in value)
+    except TypeError:
+        return repr(value)
+
+
+def _plain_settings(node):
+    rna = getattr(node, 'bl_rna', None)
+    if rna is None:
+        return ()
+    if node.bl_idname not in _setting_names:
+        _setting_names[node.bl_idname] = tuple(
+            prop.identifier for prop in rna.properties
+            if prop.type in _PLAIN and prop.identifier not in _EDITOR_ONLY
+            and not prop.identifier.startswith('bl_'))
+    return _setting_names[node.bl_idname]
+
+
+def _node_settings(node):
+    settings = [(name, _plain(getattr(node, name))) for name in _plain_settings(node)]
+    settings.extend((name, _plain(getattr(node, name, None))) for name in ('image', 'node_tree'))
+    ramp = getattr(node, 'color_ramp', None)
+    if ramp is not None:
+        settings.append(('color_ramp', (ramp.interpolation, tuple(
+            (element.position, _plain(element.color)) for element in ramp.elements))))
+    return tuple(settings)
+
+
+def _node_record(tree, node, cache):
+    key = ('node', node.as_pointer())
+    if key not in cache:
+        inputs = []
+        for socket in node.inputs:
+            link = _linked(tree, socket, cache)
+            inputs.append((socket.identifier,
+                           (link.from_node.name, link.from_socket.identifier) if link is not None
+                           else _plain(getattr(socket, 'default_value', None))))
+        record = repr((node.bl_idname, _node_settings(node), tuple(inputs)))
+        cache[key] = hashlib.sha256(record.encode()).hexdigest()[:16]
+    return cache[key]
+
+
+def signature(tree, sources, cache=None):
+    """Hash the upstream graph of channel sources: nodes, links, input values, and settings."""
+    cache = {} if cache is None else cache
+    records = set()
+    for source in sources:
+        for node_tree, socket, stack in _walk(tree, source, True, cache):
+            node = socket.node
+            path = tuple(group.name for group, _ in stack)
+            records.add(f'{path}/{node.name}/{socket.identifier}')
+            records.add(f'{path}/{node.name}={_node_record(node_tree, node, cache)}')
+    return hashlib.sha256('\n'.join(sorted(records)).encode()).hexdigest()
+
+
+def signatures(material):
+    """Hash the upstream graph of every channel of a material."""
+    cache = {}
+    return {key: signature(material.node_tree, sources, cache)
+            for key, sources in channel_sources(material).items()}
 
 
 def _png(image):
@@ -148,7 +293,9 @@ def _png(image):
         os.unlink(path)
 
 
-def _bake_channel(obj, material, channel, bake_type, source, output, size):
+@contextmanager
+def _bake_image(obj, material, label, bake_type, source, output, size, color_space):
+    """Bake a source socket into a new image and yield it. Restore the node tree afterwards."""
     tree = material.node_tree
     active = tree.nodes.active
     surface = output.inputs['Surface']
@@ -159,7 +306,7 @@ def _bake_channel(obj, material, channel, bake_type, source, output, size):
     target = None
     shader = None
     try:
-        image.colorspace_settings.name = 'sRGB' if channel in {'color', 'emissive'} else 'Non-Color'
+        image.colorspace_settings.name = color_space
         target = tree.nodes.new('ShaderNodeTexImage')
         target.image = image
         tree.nodes.active = target
@@ -172,8 +319,8 @@ def _bake_channel(obj, material, channel, bake_type, source, output, size):
             tree.links.new(source, shader.inputs['Normal'])
             tree.links.new(shader.outputs['BSDF'], surface)
         if bpy.ops.object.bake('EXEC_DEFAULT', False, type=bake_type) != {'FINISHED'}:
-            raise RuntimeError(f"{obj.name}: {material.name}: {channel} bake did not finish")
-        return _png(image)
+            raise RuntimeError(f"{obj.name}: {material.name}: {label} bake did not finish")
+        yield image
     finally:
         if shader is not None:
             tree.nodes.remove(shader)
@@ -183,6 +330,28 @@ def _bake_channel(obj, material, channel, bake_type, source, output, size):
             tree.nodes.remove(target)
         tree.nodes.active = active
         bpy.data.images.remove(image)
+
+
+def _pixels(image):
+    values = np.empty(len(image.pixels), dtype=np.float32)
+    image.pixels.foreach_get(values)
+    return values
+
+
+def _bake_channel(obj, material, channel, bake_type, source, output, size, alpha=None):
+    mask = None
+    if alpha is not None:
+        with _bake_image(obj, material, 'alpha', 'EMIT', alpha, output, size,
+                         'Non-Color') as image:
+            mask = _pixels(image)[0::4]
+    color_space = 'sRGB' if channel in {'color', 'emissive'} else 'Non-Color'
+    with _bake_image(obj, material, channel, bake_type, source, output, size,
+                     color_space) as image:
+        if mask is not None:
+            values = _pixels(image)
+            values[3::4] = mask
+            image.pixels.foreach_set(values)
+        return _png(image)
 
 
 def _bake_slot(obj, material, size, selected=None):
@@ -197,11 +366,13 @@ def _bake_slot(obj, material, size, selected=None):
     nodes = material.node_tree.nodes
     active = nodes.active
     paint_slot = material.paint_active_slot
+    alpha = alpha_source(material)
     # Setting nodes.active to the bake target clears the active texture flag on every other node.
     shown = {node.name: node.show_texture for node in nodes}
     try:
         uv.active_render = True
-        return {channel: _bake_channel(obj, material, channel, bake_type, source, output, size)
+        return {channel: _bake_channel(obj, material, channel, bake_type, source, output, size,
+                                       alpha if channel == 'color' else None)
                 for channel, bake_type, source, output in sources}
     finally:
         material.paint_active_slot = paint_slot
@@ -291,11 +462,13 @@ def _restore_context(scene, settings, engine, samples, device, selected, active,
         bpy.ops.object.mode_set('EXEC_DEFAULT', False, mode=mode)
 
 
-def bake_objects(objects, size, selected=None):
+@contextmanager
+def _ignoring_updates():
+    """Keep the bake's own edits out of texture dirt. One view layer update reports them first."""
     global baking
     baking = True
     try:
-        return _bake_objects(objects, size, selected)
+        yield
     finally:
         try:
             bpy.context.view_layer.update()
@@ -303,11 +476,26 @@ def bake_objects(objects, size, selected=None):
             baking = False
 
 
+def bake_objects(objects, size, selected=None):
+    with _ignoring_updates():
+        return _bake_objects(objects, size, selected)
+
+
+def ensure_outputs(objects):
+    """Run the output node setup for every material of the objects."""
+    materials = {slot.material.as_pointer(): slot.material for _, obj in objects
+                 for slot in obj.material_slots if slot.material is not None}
+    with _ignoring_updates():
+        for material in materials.values():
+            ensure_output_node(material)
+
+
 def _validate_channels(objects, channel_filter):
     for _, obj in objects:
         for slot in obj.material_slots:
             material = slot.material
             if channel_filter is None or (material and material.as_pointer() in channel_filter):
+                ensure_output_node(material)
                 channels(material)
 
 

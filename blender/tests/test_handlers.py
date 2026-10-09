@@ -323,7 +323,7 @@ def test_bake_skips_hidden_sent_objects_and_counts_them(handlers, monkeypatch):
 
     def obj(name, visible=True, hide_render=False):
         return types.SimpleNamespace(name=name, visible_get=lambda **_kw: visible,
-                                     hide_render=hide_render)
+                                     hide_render=hide_render, material_slots=[])
 
     def layer(names=(), children=(), exclude=False, hide_render=False):
         return types.SimpleNamespace(exclude=exclude, children=children,
@@ -372,6 +372,9 @@ def test_auto_bake_waits_for_pause_and_keeps_link_on_error(handlers, monkeypatch
     monkeypatch.setattr(handlers, '_sent_objects', lambda _view: [('mesh', obj)])
     monkeypatch.setattr(handlers, '_texture_filter', lambda *_args: {7: {'color'}})
     monkeypatch.setattr(bake, 'render_enabled', lambda *_args: True)
+    prepared, stored = [], []
+    monkeypatch.setattr(bake, 'ensure_outputs', prepared.append)
+    monkeypatch.setattr(handlers, '_store_signatures', lambda *args: stored.append(args))
     calls = []
 
     def bake_objects(objects, size, selected):
@@ -392,15 +395,18 @@ def test_auto_bake_waits_for_pause_and_keeps_link_on_error(handlers, monkeypatch
     window.modal_operators.clear()
     handlers._auto_bake(context)
     assert calls == [([('mesh', obj)], 512, {7: {'color'}})]
+    assert prepared == [[('mesh', obj)]]
+    assert stored == [([('mesh', obj)], {7: {'color'}})]
     assert session.status == 'Auto baked 1 textures'
     handlers._dirty_materials.add(7)
     session.send_bakes = lambda _slots, auto: (_ for _ in ()).throw(ValueError('queue limit'))
     handlers._auto_bake(context)
+    assert len(stored) == 1
     assert not scene.mesh_link_auto_bake
     assert session.status == 'queue limit' and session.running
 
 
-def test_image_dirt_selects_reachable_channel_before_material_dirt(handlers, monkeypatch):
+def resolution_fixture(monkeypatch):
     from mesh_link import bake
 
     image = types.SimpleNamespace(as_pointer=lambda: 1)
@@ -408,16 +414,47 @@ def test_image_dirt_selects_reachable_channel_before_material_dirt(handlers, mon
     settings = types.SimpleNamespace(as_pointer=lambda: 3, node_tree='settings')
     slots = [types.SimpleNamespace(material=material) for material in (paint, settings)]
     objects = [('mesh', types.SimpleNamespace(material_slots=slots))]
-
-    def channels(material):
-        return [('color', 'EMIT', (material.node_tree, 'color'), None),
-                ('roughness', 'EMIT', (material.node_tree, 'roughness'), None)]
-
-    monkeypatch.setattr(bake, 'channels', channels)
+    state = {'color': 'c1', 'roughness': 'r1'}
+    monkeypatch.setattr(bake, 'channel_sources', lambda material: {
+        'color': [(material.node_tree, 'color')], 'roughness': [(material.node_tree, 'roughness')]})
     monkeypatch.setattr(bake, 'source_images',
                         lambda _tree, source: [image] if source == ('paint', 'color') else [])
+    monkeypatch.setattr(bake, 'signatures', lambda _material: dict(state))
+    return objects, state
+
+
+def test_image_dirt_selects_reachable_channel_before_material_dirt(handlers, monkeypatch):
+    objects, _ = resolution_fixture(monkeypatch)
     assert handlers._texture_filter(objects, {1}, {3}) == {2: {'color'}}
+
+
+def test_material_dirt_selects_channels_with_changed_or_missing_signature(handlers, monkeypatch):
+    objects, state = resolution_fixture(monkeypatch)
     assert handlers._texture_filter(objects, set(), {3}) == {3: {'color', 'roughness'}}
+    handlers._signatures.update({(3, 'color'): 'c1', (3, 'roughness'): 'r1'})
+    assert handlers._texture_filter(objects, set(), {3}) == {}
+    state['roughness'] = 'r2'
+    assert handlers._texture_filter(objects, set(), {3}) == {3: {'roughness'}}
+    assert handlers._texture_filter(objects, set(), {2}) == {2: {'color', 'roughness'}}
+    assert handlers._texture_filter(objects, set(), set()) == {}
+    del state['roughness']
+    handlers._signatures[(3, 'roughness')] = 'r2'
+    assert handlers._texture_filter(objects, set(), {3}) == {3: set()}
+    handlers._store_signatures(objects, {3: set()})
+    assert (3, 'roughness') not in handlers._signatures and (3, 'color') in handlers._signatures
+    assert handlers._texture_filter(objects, set(), {3}) == {}
+    assert handlers._texture_filter(objects, {1}, {3}) == {2: {'color'}}
+
+
+def test_signatures_are_stored_after_a_bake_and_cleared_on_disconnect(handlers, monkeypatch):
+    objects, state = resolution_fixture(monkeypatch)
+    handlers._store_signatures(objects, {3: {'color'}})
+    assert handlers._signatures == {(3, 'color'): 'c1'}
+    handlers._store_signatures(objects)
+    assert handlers._signatures == {(pointer, key): value
+                                    for pointer in (2, 3) for key, value in state.items()}
+    handlers.disconnect()
+    assert handlers._signatures == {}
 
 
 def test_texture_dirt_ignores_bake_updates(handlers, monkeypatch):

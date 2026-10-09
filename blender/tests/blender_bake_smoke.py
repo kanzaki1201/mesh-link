@@ -3,6 +3,7 @@ from pathlib import Path
 import struct
 import sys
 import tempfile
+import time
 import traceback
 import types
 import zlib
@@ -25,12 +26,12 @@ def links(tree):
              link.to_node.name, link.to_socket.name) for link in tree.links}
 
 
-def solid_png(rgb):
+def solid_png(rgb, alpha=255):
     def chunk(kind, data):
         return (struct.pack('>I', len(data)) + kind + data
                 + struct.pack('>I', zlib.crc32(kind + data)))
 
-    row = b'\0' + bytes((*rgb, 255)) * 4
+    row = b'\0' + bytes((*rgb, alpha)) * 4
     return (b'\x89PNG\r\n\x1a\n'
             + chunk(b'IHDR', struct.pack('>IIBBBBB', 4, 4, 8, 6, 0, 0, 0))
             + chunk(b'IDAT', zlib.compress(row * 4))
@@ -55,6 +56,15 @@ def center(image):
     width, height = image.size
     index = ((height // 2) * width + width // 2) * 4
     return tuple(image.pixels[index:index + 3])
+
+
+def center_alpha(image):
+    width, height = image.size
+    return image.pixels[((height // 2) * width + width // 2) * 4 + 3]
+
+
+def output_nodes(tree):
+    return [node for node in tree.nodes if node.bl_idname == 'MeshLinkOutputNode']
 
 
 def assert_color(data, source):
@@ -150,6 +160,7 @@ def nested_group_source(image):
 
 def assert_nested_group_walk(bake, image):
     material, link = nested_group_source(image)
+    assert bake.ensure_output_node(material)
     source = next(entry[2] for entry in bake.channels(material) if entry[0] == 'color')
     assert bake.source_images(material.node_tree, source) == {image}
     link.is_muted = True
@@ -215,7 +226,7 @@ def pixels(data, name):
         bpy.data.images.remove(image)
 
 
-def assert_principled_fallback(bake, red):
+def assert_auto_setup(bake, red):
     obj = make_object('Smoke Preview Plane', [(-1, 1)])
     material = make_material('Smoke Preview Paint', red)
     obj.data.materials.append(material)
@@ -223,10 +234,214 @@ def assert_principled_fallback(bake, red):
     emission = tree.nodes.new('ShaderNodeEmission')
     output = next(node for node in tree.nodes if node.type == 'OUTPUT_MATERIAL')
     tree.links.new(emission.outputs['Emission'], output.inputs['Surface'])
-    before = links(tree)
-    assert [entry[0] for entry in bake.channels(material)] == ['color']
+    image_node = next(node for node in tree.nodes if node.type == 'TEX_IMAGE')
+    assert bake.channels(material) == [] and not output_nodes(tree)
     assert_color(bake_channel(bake, obj, material, 'color'), red)
-    assert links(tree) == before
+    node, = output_nodes(tree)
+    assert [link.from_socket for link in node.inputs['Color'].links] == [image_node.outputs['Color']]
+    assert not node.inputs['Alpha'].is_linked
+    assert [entry[0] for entry in bake.channels(material)] == ['color']
+    bake_channel(bake, obj, material, 'color')
+    assert len(output_nodes(tree)) == 1
+    bare = bpy.data.materials.new('Smoke Bare Paint')
+    bare.use_nodes = True
+    bare.node_tree.nodes.remove(bare.node_tree.nodes.get('Principled BSDF'))
+    obj.data.materials.append(bare)
+    result = bake.bake_objects([('n', obj)], 64)
+    assert [slot[3].keys() for slot in result] == [{'color'}, set()]
+    assert not output_nodes(bare.node_tree)
+    bake.ensure_outputs([('n', obj)])
+    assert len(output_nodes(tree)) == 1 and not output_nodes(bare.node_tree)
+
+
+def alpha_material(name, alpha):
+    image = load_png(solid_png((204, 26, 51), alpha), name + ' Image')
+    material = make_material(name, image)
+    tree = material.node_tree
+    image_node = next(node for node in tree.nodes if node.type == 'TEX_IMAGE')
+    tree.links.new(image_node.outputs['Alpha'], tree.nodes.get('Principled BSDF').inputs['Alpha'])
+    return material, image
+
+
+def result_alpha(data, name):
+    image = load_png(data, name)
+    try:
+        return center_alpha(image)
+    finally:
+        bpy.data.images.remove(image)
+
+
+def assert_alpha_bake(bake):
+    for alpha in (128, 255, 0):
+        obj = make_object('Smoke Alpha Plane', [(-1, 1)])
+        material, source = alpha_material('Smoke Alpha Paint', alpha)
+        obj.data.materials.append(material)
+        data = bake_channel(bake, obj, material, 'color')
+        found = result_alpha(data, 'Smoke Alpha Result')
+        assert abs(found - alpha / 255) <= 2 / 255, (alpha, found)
+        if alpha == 255:
+            assert_color(data, source)
+        assert [key for key, *_ in bake.channels(material)] == ['color']
+        node, = output_nodes(material.node_tree)
+        link = node.inputs['Alpha'].links[0]
+        assert bake.channel_sources(material)['color'] == [
+            node.inputs['Color'].links[0].from_socket, link.from_socket]
+        link.is_muted = True
+        data = bake_channel(bake, obj, material, 'color')
+        assert abs(result_alpha(data, 'Smoke Alpha Muted') - 1) <= 2 / 255
+
+
+def assert_five_input_node(bake, red):
+    obj = make_object('Smoke Legacy Plane', [(-1, 1)])
+    material = make_material('Smoke Legacy Paint', red)
+    obj.data.materials.append(material)
+    tree = material.node_tree
+    node = add_output(tree)
+    interface = node.node_tree.interface
+    interface.remove(interface.items_tree['Alpha'])
+    image_node = next(item for item in tree.nodes if item.type == 'TEX_IMAGE')
+    tree.links.new(image_node.outputs['Color'], node.inputs['Color'])
+    tree.links.new(image_node.outputs['Alpha'], tree.nodes.get('Principled BSDF').inputs['Alpha'])
+    assert len(node.inputs) == 5 and bake.alpha_source(material) is None
+    interface.new_socket(name='Mask', in_out='INPUT', socket_type='NodeSocketColor')
+    assert bake.fixed_count([item.name for item in node.inputs]) == 5
+    data = bake_channel(bake, obj, material, 'color')
+    assert_color(data, red)
+    assert abs(result_alpha(data, 'Smoke Legacy Result') - 1) <= 2 / 255
+    assert len(output_nodes(tree)) == 1
+
+
+def mix_material(name, red, blue):
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    tree = material.node_tree
+    nodes = []
+    for image in (red, blue):
+        node = tree.nodes.new('ShaderNodeTexImage')
+        node.image = image
+        nodes.append(node)
+    mix = tree.nodes.new('ShaderNodeMix')
+    mix.data_type = 'RGBA'
+    mix.inputs['Factor'].default_value = 0.5
+    tree.links.new(nodes[0].outputs['Color'], mix.inputs['A'])
+    tree.links.new(nodes[1].outputs['Color'], mix.inputs['B'])
+    ramp = tree.nodes.new('ShaderNodeValToRGB')
+    tree.links.new(mix.outputs['Result'], ramp.inputs['Fac'])
+    tree.links.new(ramp.outputs['Color'], tree.nodes.get('Principled BSDF').inputs['Base Color'])
+    return material, mix
+
+
+def assert_signatures(bake, red, blue):
+    material, mix = mix_material('Smoke Signature Paint', red, blue)
+    assert bake.ensure_output_node(material)
+    first = bake.signatures(material)
+    assert first.keys() == {'color'}
+    assert bake.signatures(material) == first
+    mix.inputs['Factor'].default_value = mix.inputs['Factor'].default_value
+    material.update_tag()
+    assert bake.signatures(material) == first
+    mix.inputs['Factor'].default_value = 0.25
+    assert bake.signatures(material) != first
+    mix.inputs['Factor'].default_value = 0.5
+    assert bake.signatures(material) == first
+    mix.blend_type = 'MULTIPLY'
+    assert bake.signatures(material) != first
+    mix.blend_type = 'MIX'
+    mix.mute = True
+    assert bake.signatures(material) != first
+    mix.mute = False
+    ramp = next(node for node in material.node_tree.nodes if node.type == 'VALTORGB')
+    ramp.color_ramp.elements[0].position = 0.2
+    assert bake.signatures(material) != first
+    ramp.color_ramp.elements[0].position = 0.0
+    assert bake.signatures(material) == first
+    mix.inputs['A'].links[0].is_muted = True
+    assert bake.signatures(material) != first
+
+
+def assert_signature_timing(bake, red, blue):
+    materials = [mix_material(f'Smoke Timing {index}', red, blue)[0] for index in range(20)]
+    for material in materials:
+        bake.ensure_output_node(material)
+        node, = output_nodes(material.node_tree)
+        ramp = next(item for item in material.node_tree.nodes if item.type == 'VALTORGB')
+        for name in ('Emission', 'Metallic', 'Roughness', 'Normal'):
+            material.node_tree.links.new(ramp.outputs['Color'], node.inputs[name])
+    started = time.perf_counter()
+    for material in materials:
+        bake.signatures(material)
+    elapsed = (time.perf_counter() - started) * 1000
+    print(f'signature timing: {elapsed:.2f} ms for {len(materials)} materials with 5 channels '
+          f'({elapsed / len(materials):.2f} ms each)')
+    assert elapsed < 100, elapsed
+
+
+def assert_auto_bake_loop(bake, handlers, red, blue):
+    obj = make_object('Smoke Loop Plane', [(-1, 1)])
+    material, mix = mix_material('Smoke Loop Paint', red, blue)
+    obj.data.materials.append(material)
+    pointer = material.as_pointer()
+    sent = []
+    handlers._signatures.clear()
+    handlers._sync = types.SimpleNamespace(objects=lambda _view: {'loop': obj}, sent={'loop'})
+    handlers._session = types.SimpleNamespace(
+        running=True, ready=True, capabilities={'material', 'texture'}, status='Connected',
+        send_bakes=lambda slots, auto: sent.append(slots) or sum(len(slot[3]) for slot in slots))
+    preferences = types.SimpleNamespace(addons={
+        'mesh_link': types.SimpleNamespace(preferences=types.SimpleNamespace(texture_size='64'))})
+    context = types.SimpleNamespace(
+        scene=types.SimpleNamespace(mesh_link_auto_bake=True), view_layer=bpy.context.view_layer,
+        window_manager=types.SimpleNamespace(windows=[]), preferences=preferences)
+
+    def tag():
+        handlers._dirty_materials.add(pointer)
+        handlers._texture_changed_at = 0.0
+        handlers._auto_bake(context)
+
+    assert not output_nodes(material.node_tree)
+    tag()
+    assert len(sent) == 1 and len(output_nodes(material.node_tree)) == 1
+    assert handlers._session.status == 'Auto baked 1 textures'
+    for _ in range(3):
+        tag()
+    assert len(sent) == 1
+    node, = output_nodes(material.node_tree)
+    ramp = next(item for item in material.node_tree.nodes if item.type == 'VALTORGB')
+    roughness = material.node_tree.links.new(ramp.outputs['Color'], node.inputs['Roughness'])
+    tag()
+    assert len(sent) == 2 and sent[-1][0][3].keys() == {'roughness'}
+    mix.inputs['Factor'].default_value = 0.1
+    tag()
+    assert len(sent) == 3 and sent[-1][0][3].keys() == {'color', 'roughness'}
+    tag()
+    assert len(sent) == 3
+    material.node_tree.links.remove(roughness)
+    tag()
+    assert len(sent) == 4 and sent[-1][0][3] == {} and sent[-1][0][4] == {'color'}
+    tag()
+    assert len(sent) == 4
+    handlers._signatures.clear()
+    handlers._sync = handlers._session = None
+
+
+def assert_dirt_resolution(bake, handlers, red, blue):
+    obj = make_object('Smoke Dirt Plane', [(-1, 1)])
+    material, mix = mix_material('Smoke Dirt Paint', red, blue)
+    obj.data.materials.append(material)
+    objects = [('dirt', obj)]
+    pointer = material.as_pointer()
+    handlers._signatures.clear()
+    bake.ensure_outputs(objects)
+    assert handlers._texture_filter(objects, set(), {pointer}) == {pointer: {'color'}}
+    handlers._store_signatures(objects, {pointer: {'color'}})
+    assert handlers._texture_filter(objects, set(), {pointer}) == {}
+    material.update_tag()
+    assert handlers._texture_filter(objects, set(), {pointer}) == {}
+    mix.inputs['Factor'].default_value = 0.1
+    assert handlers._texture_filter(objects, set(), {pointer}) == {pointer: {'color'}}
+    assert handlers._texture_filter(objects, {red.as_pointer()}, set()) == {pointer: {'color'}}
+    assert handlers._texture_filter(objects, {blue.as_pointer()}, {pointer}) == {pointer: {'color'}}
+    handlers._signatures.clear()
 
 
 def assert_normal_through_output(bake):
@@ -243,6 +458,7 @@ def assert_normal_through_output(bake):
     link = tree.links.new(normal_map.outputs['Normal'], shader.inputs['Normal'])
     fallback = bake_channel(bake, obj, material, 'normal')
     tree.links.remove(link)
+    tree.nodes.remove(output_nodes(tree)[0])
     output = add_output(tree)
     tree.links.new(normal_map.outputs['Normal'], output.inputs['Normal'])
     assert [entry[0] for entry in bake.channels(material)] == ['normal']
@@ -255,6 +471,7 @@ def assert_normal_through_output(bake):
 
 
 def assert_output_node_groups(bake):
+    bpy.data.orphans_purge(do_recursive=True)
     before = len(output_groups())
     material = bpy.data.materials.new('Smoke Output Groups')
     material.use_nodes = True
@@ -262,7 +479,7 @@ def assert_output_node_groups(bake):
     node = add_output(tree, 'Mask')
     assert node.bl_label == 'Mesh Link Output'
     assert [socket.name for socket in node.inputs] == [
-        'Color', 'Emission', 'Normal', 'Metallic', 'Roughness', 'Mask']
+        'Color', 'Emission', 'Normal', 'Metallic', 'Roughness', 'Alpha', 'Mask']
     assert all(socket.type == 'RGBA' for socket in node.inputs)
     rgb = tree.nodes.new('ShaderNodeRGB')
     tree.links.new(rgb.outputs['Color'], node.inputs['Mask'])
@@ -375,6 +592,8 @@ def main():
         'target', 'normal_space', 'normal_r', 'normal_g', 'normal_b',
         'use_selected_to_active', 'use_clear')}
     materials = (material_a, material_red, material_blue, material_unlinked)
+    for material in materials:
+        bake.ensure_output_node(material)
     old_trees = [(material, links(material.node_tree), len(material.node_tree.nodes),
                   material.node_tree.nodes.active) for material in materials]
     old_indices = [[polygon.material_index for polygon in obj.data.polygons]
@@ -490,7 +709,13 @@ def main():
     scene.render.engine = 'CYCLES'
     scene.render.bake.target = 'IMAGE_TEXTURES'
     assert bpy.ops.object.bake(type='EMIT') == {'FINISHED'}
-    assert_principled_fallback(bake, red)
+    assert_auto_setup(bake, red)
+    assert_alpha_bake(bake)
+    assert_five_input_node(bake, red)
+    assert_signatures(bake, red, blue)
+    assert_signature_timing(bake, red, blue)
+    assert_dirt_resolution(bake, handlers, red, blue)
+    assert_auto_bake_loop(bake, handlers, red, blue)
     assert_normal_through_output(bake)
     assert_output_node_groups(bake)
     assert_output_node_errors(bake)

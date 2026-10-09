@@ -15,7 +15,7 @@ It is not affiliated with or endorsed by Blender, Nomad Sculpt or their develope
 - **Blender and Nomad Sculpt.** Blender connects through the Mesh Link extension. Nomad connects through App Linking.
 - **Your Unity materials.** Assign any Unity material to each material slot. lilToon, MK Toon, MToon, URP Lit, and other shaders work.
 - **Saved assignments.** A Material Map asset keeps your material choices across sessions, Unity restarts, and scenes.
-- **Texture preview from Blender.** One button bakes your painted maps and shows them on the Unity materials. Layered painting add-ons such as Paint System and Ucupaint work.
+- **Texture preview from Blender.** Mesh Link bakes your painted maps and shows them on the Unity materials. With **Auto Bake**, it sends the changed maps after each paint pause. Layered painting add-ons such as Paint System and Ucupaint work.
 - **Vertex paint from Nomad.** Nomad vertex colors and opacity reach Unity.
 - **Non-destructive.** The preview is temporary. Mesh Link never changes your material assets.
 
@@ -108,10 +108,11 @@ It works with plain image textures, baked maps, and layered painting add-ons suc
 ### How to use it
 
 1. Connect Blender to Unity as in the quick start.
-2. In Unity, assign materials to the slots.
+2. In Unity, give the scene a [Material Map](#materials) and assign materials to the slots. Texture channels need a Material Map.
 3. Paint in Blender.
 4. In the Mesh Link sidebar, press **Bake & Send Textures**.
 5. Unity shows the baked maps on the preview.
+6. Optional: select **Auto Bake** and keep painting.
 
 Select **Auto Bake** under the button to bake and send changes without the button.
 When you stop painting for two seconds, Mesh Link bakes again only the channels whose sources changed.

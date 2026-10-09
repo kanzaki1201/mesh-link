@@ -121,7 +121,10 @@ Hidden objects and objects that do not render are skipped.
 
 ### What is sent
 
-Mesh Link reads the inputs of the Principled BSDF that feeds the Material Output.
+Mesh Link reads the inputs of the first Principled BSDF in the material.
+The Principled BSDF does not need to feed the Material Output.
+A channel preview of a layer add-on, such as the Paint System preview, therefore keeps the channels.
+A material that has a **Mesh Link Output** node sends only what that node receives.
 
 | Blender input | Channel | Unity property by default |
 |---|---|---|
@@ -145,17 +148,29 @@ For `roughness`, invert is on by default when the shader has `_SmoothnessTex` an
 ### Extra maps, such as toon masks
 
 Toon shaders use extra maps, for example shadow or rim masks.
-Send them with a **Mesh Link Channel** node:
+Send them with a **Mesh Link Output** node:
 
-1. In the Shader Editor, add **Shift+A > Mesh Link > Mesh Link Channel**.
-2. Connect your mask to its **Color** input.
-3. Type `Shadow Mask` as the name on the node.
-4. Press **Bake & Send Textures**.
+1. In the Shader Editor, add **Shift+A > Mesh Link > Mesh Link Output**.
+2. Open the sidebar (**N**), select the **Node** tab, and find the node's input list.
+3. Add an input with **+**, and type `Shadow Mask` as its name.
+4. Connect your mask to that input.
+5. Press **Bake & Send Textures**.
 
-The `Shadow Mask` node sends `x_shadow_mask`.
-Mesh Link trims and lowercases the node name, and replaces spaces and hyphens with `_`.
+The input `Shadow Mask` sends `x_shadow_mask`.
+Mesh Link trims and lowercases the input name, and replaces spaces and hyphens with `_`.
 After conversion, the name can contain only `a-z`, `0-9`, and `_`.
-A duplicate name on one material stops the bake with an error.
+An empty name, or two names that give the same key, stops the bake with an error.
+You can rename, reorder, and remove custom inputs in the same list.
+
+The node also has the five standard inputs, `Color`, `Emission`, `Normal`, `Metallic`, and `Roughness`.
+They send the channels of the table above.
+Do not rename them or remove them, or the bake stops with an error.
+If a material has a Mesh Link Output node, Mesh Link ignores its Principled BSDF.
+Link all the standard channels you want to send to the node.
+A material with more than one node uses the first one.
+
+Outputs of a layer add-on that do not feed the Principled BSDF, such as the Paint System `Occlusion` output, are not sent by default.
+Add a custom input to the Mesh Link Output node and connect the output to it.
 
 ### Shader settings
 

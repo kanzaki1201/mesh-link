@@ -105,6 +105,16 @@ Mesh Link reads what is linked into the Principled BSDF of each material:
 - Hidden objects and objects that do not render are skipped.
 - Set the bake size in the extension preferences with **Texture Size** (default 1024).
 
+### Blender materials
+
+Use materials with the Principled BSDF or other built-in Blender shader nodes.
+
+MToon materials of the VRM add-on are not supported.
+Convert them to Principled BSDF materials first.
+[Malloc's VRoid Blender Tools](https://github.com/kanzaki1201/malloc-vroid-blender-tools) converts VRoid MToon materials in bulk.
+
+Other third-party shaders are not tested.
+
 ### Extra maps, such as toon masks
 
 Use a **Mesh Link Output** node:
@@ -175,6 +185,7 @@ This is a known issue.
 - No modifiers, armatures, hierarchy, cameras, or lights. Shape keys send the active key.
 - Faces must be triangles or quads. N-gons stop the link.
 - Blender vertex colors and Nomad textures are not sent.
+- Blender MToon materials are not supported. See [Blender materials](#blender-materials).
 - Objects above 2,000,000 vertices stop the link.
 
 ## Development

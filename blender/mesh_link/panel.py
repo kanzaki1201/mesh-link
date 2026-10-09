@@ -23,7 +23,7 @@ class MESHLINK_OT_disconnect(bpy.types.Operator):
 
 class MESHLINK_OT_bake_textures(bpy.types.Operator):
     bl_idname = "mesh_link.bake_textures"
-    bl_label = "Bake & Send Textures"
+    bl_label = "Bake and Send All Textures"
 
     @classmethod
     def poll(cls, _context):

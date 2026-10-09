@@ -11,7 +11,7 @@ It is not affiliated with or endorsed by Blender, Nomad Sculpt or their develope
 
 - **Live preview.** Edits, sculpt strokes, transforms, and visibility show in Unity as you work.
 - **Your materials.** Put any Unity material on each slot: lilToon, MK Toon, MToon, URP Lit, and others.
-- **Painted textures from Blender.** Your painted maps show on the Unity materials. **Auto Bake** sends them after each paint pause. Paint System and Ucupaint work.
+- **Painted textures from Blender.** Your painted maps show on the Unity materials. **Auto Bake Edited Textures** sends them after each paint pause. Paint System and Ucupaint work.
 - **Vertex paint from Nomad.** Nomad vertex colors show in Unity.
 
 ## Requirements
@@ -64,11 +64,11 @@ Several scenes can share one map.
 
 ### 3. Show painted textures
 
-1. In Blender, press **Bake & Send Textures** once.
+1. In Blender, press **Bake and Send All Textures** once.
 2. In Unity, each map shows under its material row, on a matching shader property. Change the property in the drop-down list if needed.
-3. Select **Auto Bake** in Blender and paint.
+3. Select **Auto Bake Edited Textures** in Blender and paint.
 
-Two seconds after you stop painting, Auto Bake sends the maps that changed.
+Two seconds after you stop painting, Auto Bake Edited Textures sends the maps that changed.
 It works in Texture Paint mode and does not add undo steps.
 
 Some shaders need a setting before a map shows. See [Shader setup](#shader-setup).
@@ -161,13 +161,13 @@ For Nomad, accept the request in Nomad.
 Check **Host** and **Port** on both sides, and the firewall.
 `127.0.0.1` works only on one machine.
 
-### Bake & Send Textures is grayed out
+### Bake and Send All Textures is grayed out
 
 Connect to Unity first.
 
-### Auto Bake turned itself off
+### Auto Bake Edited Textures turned itself off
 
-Read the error in the Mesh Link tab, fix it, and turn Auto Bake on again.
+Read the error in the Mesh Link tab, fix it, and turn Auto Bake Edited Textures on again.
 
 ### A texture does not show
 

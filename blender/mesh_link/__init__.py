@@ -29,7 +29,7 @@ def register():
     bpy.types.Scene.mesh_link_port = bpy.props.IntProperty(
         name="Port", default=48312, min=1, max=65535)
     bpy.types.Scene.mesh_link_auto_bake = bpy.props.BoolProperty(
-        name="Auto Bake", default=False,
+        name="Auto Bake Edited Textures", default=False,
         update=lambda _scene, _context: handlers.clear_texture_dirt())
     handlers.register()
 

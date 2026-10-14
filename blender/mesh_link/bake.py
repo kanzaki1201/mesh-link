@@ -354,6 +354,11 @@ def _bake_channel(obj, material, channel, bake_type, source, output, size, alpha
         return _png(image)
 
 
+def _paint_system_channels(material):
+    groups = getattr(getattr(material, 'ps_mat_data', None), 'groups', ())
+    return [channel for group in groups for channel in group.channels]
+
+
 def _bake_slot(obj, material, size, selected=None):
     sources = [entry for entry in channels(material)
                if selected is None or entry[0] in selected]
@@ -369,12 +374,19 @@ def _bake_slot(obj, material, size, selected=None):
     alpha = alpha_source(material)
     # Setting nodes.active to the bake target clears the active texture flag on every other node.
     shown = {node.name: node.show_texture for node in nodes}
+    # A Paint System channel preview drops the output transform, so the Normal socket carries colour.
+    previewed = [channel for channel in _paint_system_channels(material)
+                 if channel.disable_output_transform]
     try:
+        for channel in previewed:
+            channel.disable_output_transform = False
         uv.active_render = True
         return {channel: _bake_channel(obj, material, channel, bake_type, source, output, size,
                                        alpha if channel == 'color' else None)
                 for channel, bake_type, source, output in sources}
     finally:
+        for channel in previewed:
+            channel.disable_output_transform = True
         material.paint_active_slot = paint_slot
         nodes.active = active
         for node in nodes:

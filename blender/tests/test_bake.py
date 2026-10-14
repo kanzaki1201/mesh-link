@@ -459,3 +459,48 @@ def test_signature_walks_groups_at_any_depth(bake):
     invert.inputs[0].default_value = 0.25
     assert bake.signatures(material) != first
     assert bake.source_images(material.node_tree, node.inputs[0].links[0].from_socket) == {image.image}
+
+
+def slot_fixture(bake, monkeypatch, flags, seen, fail=False):
+    channel_objects = [types.SimpleNamespace(disable_output_transform=flag) for flag in flags]
+    groups = [types.SimpleNamespace(channels=channel_objects)]
+    material = types.SimpleNamespace(
+        name='Paint', node_tree=types.SimpleNamespace(nodes=FakeLayers()), paint_active_slot=0,
+        ps_mat_data=types.SimpleNamespace(groups=groups))
+    obj = types.SimpleNamespace(name='Obj', data=types.SimpleNamespace(uv_layers=FakeLayers()))
+    monkeypatch.setattr(bake, 'channels', lambda _material: [('normal', 'NORMAL', None, None)])
+    monkeypatch.setattr(bake, 'alpha_source', lambda _material: None)
+
+    def bake_channel(*_args):
+        seen.append([channel.disable_output_transform for channel in channel_objects])
+        if fail:
+            raise RuntimeError('bake failed')
+        return b'png'
+
+    monkeypatch.setattr(bake, '_bake_channel', bake_channel)
+    return obj, material, channel_objects
+
+
+class FakeLayers(list):
+    """List with an .active attribute, for both uv_layers and nodes."""
+    active = types.SimpleNamespace(active_render=False)
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_bake_clears_paint_system_preview_and_restores_it(bake, monkeypatch, fail):
+    seen = []
+    obj, material, channel_objects = slot_fixture(bake, monkeypatch, [True, False], seen, fail)
+    if fail:
+        with pytest.raises(RuntimeError):
+            bake._bake_slot(obj, material, 8)
+    else:
+        assert bake._bake_slot(obj, material, 8) == {'normal': b'png'}
+    assert seen == [[False, False]]
+    assert [channel.disable_output_transform for channel in channel_objects] == [True, False]
+
+
+def test_bake_without_paint_system_data(bake, monkeypatch):
+    seen = []
+    obj, material, _channels = slot_fixture(bake, monkeypatch, [], seen)
+    del material.ps_mat_data
+    assert bake._bake_slot(obj, material, 8) == {'normal': b'png'}

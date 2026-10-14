@@ -115,7 +115,7 @@ namespace Malloc.MeshLink
             else if (blobs.ContainsKey(textureId))
             {
                 state.PendingId = null;
-                if (Decode(textureId, IsLinear(channel)) != null)
+                if (Decode(textureId, channel) != null)
                 {
                     state.Id = textureId;
                 }
@@ -159,7 +159,7 @@ namespace Malloc.MeshLink
                     foreach (var channel in slot.Value)
                     {
                         if (channel.Value.PendingId != header.texture_id) continue;
-                        if (Decode(header.texture_id, IsLinear(channel.Key)) == null)
+                        if (Decode(header.texture_id, channel.Key) == null)
                         {
                             channel.Value.PendingId = null;
                             continue;
@@ -189,7 +189,7 @@ namespace Malloc.MeshLink
                     var state = channel.Value;
                     var binding = ResolveProperty(materials[slot.Key], channel.Key, map);
                     if (state.Id == null || binding.Property == null) continue;
-                    var texture = Decode(state.Id, IsLinear(channel.Key), binding.Invert);
+                    var texture = Decode(state.Id, channel.Key, binding.Invert);
                     if (texture == null) continue;
                     block.SetTexture(binding.Property, texture);
                 }
@@ -333,9 +333,12 @@ namespace Malloc.MeshLink
             return index >= 0 && shader.GetPropertyType(index) == ShaderPropertyType.Texture;
         }
 
-        private Texture2D Decode(string id, bool linear, bool invert = false)
+        internal Texture2D Decode(string id, string channel, bool invert = false)
         {
-            var key = id + (linear ? ":linear" : ":srgb") + (invert ? ":invert" : ":direct");
+            var linear = IsLinear(channel);
+            var normal = channel == "normal";
+            var key = id + (linear ? ":linear" : ":srgb") + (invert ? ":invert" : ":direct") +
+                (normal ? ":normal" : string.Empty);
             if (decoded.TryGetValue(key, out var texture)) return texture;
             if (!blobs.TryGetValue(id, out var bytes)) return null;
             texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, linear)
@@ -355,14 +358,22 @@ namespace Malloc.MeshLink
                 setStatus("Connected. Skipped texture channel: PNG decode failed.");
                 return null;
             }
-            if (invert)
+            if (invert || normal)
             {
                 var pixels = texture.GetPixels32();
                 for (var index = 0; index < pixels.Length; index++)
                 {
-                    pixels[index].r = (byte)(255 - pixels[index].r);
-                    pixels[index].g = (byte)(255 - pixels[index].g);
-                    pixels[index].b = (byte)(255 - pixels[index].b);
+                    if (invert)
+                    {
+                        pixels[index].r = (byte)(255 - pixels[index].r);
+                        pixels[index].g = (byte)(255 - pixels[index].g);
+                        pixels[index].b = (byte)(255 - pixels[index].b);
+                    }
+                    if (!normal) continue;
+                    // DXT5nm layout (1, y, 0, x): shaders read X from alpha.
+                    pixels[index].a = pixels[index].r;
+                    pixels[index].r = 255;
+                    pixels[index].b = 0;
                 }
                 texture.SetPixels32(pixels);
                 texture.Apply(true, true);
@@ -402,7 +413,8 @@ namespace Malloc.MeshLink
                 blobs.Remove(id);
                 referenced.Remove(id);
                 foreach (var key in new[] { id + ":linear:direct", id + ":srgb:direct",
-                    id + ":linear:invert", id + ":srgb:invert" })
+                    id + ":linear:invert", id + ":srgb:invert", id + ":linear:direct:normal",
+                    id + ":linear:invert:normal" })
                 {
                     if (!decoded.TryGetValue(key, out var texture)) continue;
                     UnityEngine.Object.DestroyImmediate(texture);
